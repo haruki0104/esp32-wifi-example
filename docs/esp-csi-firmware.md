@@ -1,18 +1,20 @@
 # Espressif ESP-CSI firmware
 
+This application collects CSI in `src/csi/` and keeps the clock and OLED.
+Do not flash the example below onto this board. The example is the reference
+for router-ping capture, not a replacement firmware.
+
 Research checked on 2026-11-03 against Espressif's `esp-csi` repository at
 commit [`8633d671`](https://github.com/espressif/esp-csi/tree/8633d67152db2808f141cc1595970aa9cf406045).
 
-## Recommended example for this board
+## Reference example
 
-Start with Espressif's
-[`examples/get-started/csi_recv_router`](https://github.com/espressif/esp-csi/tree/8633d67152db2808f141cc1595970aa9cf406045/examples/get-started/csi_recv_router).
-It is the closest match for this project's ESP32 Dev Module and existing WiFi
-router: the ESP32 joins a configured network, pings its gateway, and collects
-CSI from the router's replies. The example prints `CSI_DATA` records over
-UART. Its README documents selecting the target, configuring the connection
-with `idf.py menuconfig`, and flashing/monitoring with `idf.py -p PORT flash
-monitor`.
+Espressif's
+[`examples/get-started/csi_recv_router`](https://github.com/espressif/esp-csi/tree/8633d67152db2808f141cc1595970aa9cf406045/examples/get-started/csi_recv_router)
+is the closest published match for this ESP32 Dev Module: it joins a
+configured network, pings the gateway, and collects CSI from the router. It
+prints `CSI_DATA` text over UART. Read it for the method. Do not flash it
+over this project.
 
 The repo also has
 [`csi_recv`](https://github.com/espressif/esp-csi/tree/8633d67152db2808f141cc1595970aa9cf406045/examples/get-started/csi_recv)
@@ -21,20 +23,17 @@ for an ESP-NOW receiver/transmitter pair. That option needs another ESP32
 running the sender; it is less direct for a one-board setup.
 
 These are source examples, not drop-in firmware binaries. The router example
-is an ESP-IDF CMake application (`app_main`), while this project is a
-PlatformIO/Arduino sketch (`setup`/`loop`). Flashing the example replaces the
-current application; it will not retain this project's clock and OLED
-features. To combine them, port the CSI initialization and data collection
-into this application, then keep the existing WiFi/time/display modules and
-add a dedicated CSI collection module.
+is an ESP-IDF CMake application (`app_main`). This project is a
+PlatformIO/Arduino sketch (`setup`/`loop`) that already contains its own CSI
+collector. Flashing the example replaces the clock, OLED, and `CSI1` stream.
 
 ## Main differences
 
-| Normal firmware in this project | CSI-enabled example |
+| This firmware | `csi_recv_router` example |
 |---|---|
-| PlatformIO with the Arduino framework; `setup()`/`loop()` coordinate WiFi, SNTP time, and OLED rendering. | ESP-IDF application using `app_main()`, ESP-IDF WiFi APIs, and CMake. |
-| Connects to the configured WiFi network and displays local time/date. | Configures CSI capture, registers a WiFi CSI receive callback, and enables CSI collection. The router example generates ping traffic to the gateway to elicit packets. |
-| No CSI configuration, callback, or CSI data output. | Enables the CSI driver option in `sdkconfig.defaults` and emits metadata plus CSI sample values as `CSI_DATA` over UART. The example's default console baud is 921600, so the monitor baud differs from this project's 115200. |
+| PlatformIO Arduino, `espressif32@7.0.1`. `setup()`/`loop()` coordinate Wi-Fi, SNTP, OLED, and CSI. | ESP-IDF `app_main()` and CMake. Flashing it removes this application. |
+| LLTF only, AP-BSSID filter, 100 ms gateway ping, binary `CSI1` frames at 115200 after `CSI_STREAM_START`. | Decimal `CSI_DATA` text. Its default console baud is 921600. |
+| CSI is already enabled in the prebuilt Arduino Wi-Fi library. AMPDU and RX-buffer settings from the example `sdkconfig.defaults` are not applied. | Enables CSI in `sdkconfig.defaults` and can change Wi-Fi buffer and AMPDU options. |
 
 The router example's component manifest declares ESP-IDF `>=4.4.1` and the
 `esp_csi_gain_ctrl` component. Its `sdkconfig.defaults` enables CSI and adjusts

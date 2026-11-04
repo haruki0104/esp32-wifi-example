@@ -6,10 +6,17 @@
 
 namespace {
 
+#ifndef OLED_SDA
+#error OLED_SDA build flag is required
+#endif
+#ifndef OLED_SCL
+#error OLED_SCL build flag is required
+#endif
+
 constexpr int kScreenWidth = 128;
 constexpr int kScreenHeight = 64;
-constexpr int kSdaPin = 21;
-constexpr int kSclPin = 22;
+constexpr int kSdaPin = OLED_SDA;
+constexpr int kSclPin = OLED_SCL;
 constexpr uint8_t kI2cAddress = 0x3C;
 
 Adafruit_SSD1306 screen(kScreenWidth, kScreenHeight, &Wire, -1);
@@ -41,7 +48,7 @@ void OledDisplay::showStatus(const char* line1, const char* line2,
   screen.display();
 }
 
-void OledDisplay::showClock(const tm* localTime) {
+void OledDisplay::showClock(const tm* localTime, const char* statusLine) {
   screen.clearDisplay();
   screen.setTextColor(WHITE);
   screen.setTextSize(2);
@@ -59,15 +66,17 @@ void OledDisplay::showClock(const tm* localTime) {
     screen.setCursor(0, 32);
     screen.printf("%04d-%02d-%02d  %s", localTime->tm_year + 1900,
                   localTime->tm_mon + 1, localTime->tm_mday, weekday);
-    screen.setCursor(0, 48);
-    screen.print("NTP: synchronized");
   } else {
     screen.print("--:--:--");
     screen.setTextSize(1);
     screen.setCursor(0, 32);
     screen.print("Waiting for NTP time");
+  }
+
+  if (statusLine != nullptr && statusLine[0] != '\0') {
+    screen.setTextSize(1);
     screen.setCursor(0, 48);
-    screen.print("NTP: connecting");
+    screen.print(statusLine);
   }
 
   screen.display();

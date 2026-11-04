@@ -2,6 +2,7 @@
 
 #include <secrets.h>
 
+#include "csi/CsiCollector.h"
 #include "display/OledDisplay.h"
 #include "network/WifiConnection.h"
 #include "time/NetworkClock.h"
@@ -15,9 +16,26 @@ constexpr uint32_t kDisplayIntervalMs = 1000;
 OledDisplay display;
 WifiConnection wifi;
 NetworkClock networkClock;
+CsiCollector csi;
 uint32_t lastDisplayUpdate = 0;
+bool streamStarted = false;
+
+void formatCsiStatus(char* buffer, size_t size) {
+  if (!csi.isRunning()) {
+    snprintf(buffer, size, "CSI: waiting");
+    return;
+  }
+
+  uint32_t rate = 0;
+  uint16_t drops = 0;
+  csi.sampleStatus(rate, drops);
+  snprintf(buffer, size, "CSI %lu/s d%u", static_cast<unsigned long>(rate),
+           drops);
+}
 
 void connectAndStartClock() {
+  csi.stop();
+  streamStarted = false;
   display.showStatus("Connecting WiFi...", WIFI_SSID);
   if (!wifi.connect(WIFI_SSID, WIFI_PASSWORD, kWifiTimeoutMs)) {
     display.showStatus("WiFi connection", "failed", "Retrying...");
@@ -26,7 +44,18 @@ void connectAndStartClock() {
 
   display.showStatus("Syncing time...", "NTP");
   networkClock.begin();
-  if (!networkClock.waitForSync(kNtpTimeoutMs)) {
+
+  const uint32_t gatewayWaitStarted = millis();
+  while (!csi.isRunning() && millis() - gatewayWaitStarted < 2000) {
+    if (csi.start()) {
+      Serial.println("CSI_STREAM_START");
+      streamStarted = true;
+    } else {
+      delay(50);
+    }
+  }
+
+  if (!streamStarted && !networkClock.waitForSync(kNtpTimeoutMs)) {
     Serial.println("NTP sync is pending; SNTP will continue in the background");
   }
 }
@@ -49,18 +78,31 @@ void setup() {
 
 void loop() {
   if (!wifi.isConnected()) {
+    csi.stop();
+    streamStarted = false;
+    display.showStatus("WiFi connection", "lost", "Retrying...");
     Serial.println("WiFi disconnected; reconnecting");
     connectAndStartClock();
     return;
   }
 
+  if (!streamStarted && csi.start()) {
+    Serial.println("CSI_STREAM_START");
+    streamStarted = true;
+  }
+  if (streamStarted) {
+    csi.writePending();
+  }
+
   if (millis() - lastDisplayUpdate >= kDisplayIntervalMs) {
     lastDisplayUpdate = millis();
+    char status[22];
+    formatCsiStatus(status, sizeof(status));
     tm localTime{};
     if (networkClock.getLocalTime(localTime)) {
-      display.showClock(&localTime);
+      display.showClock(&localTime, status);
     } else {
-      display.showClock(nullptr);
+      display.showClock(nullptr, status);
     }
   }
 }
