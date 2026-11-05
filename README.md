@@ -19,6 +19,18 @@ the relevant layer and application flow.
 For Espressif's CSI firmware examples and how they differ from this Arduino
 application, see [docs/esp-csi-firmware.md](docs/esp-csi-firmware.md).
 
+## Branch workflow
+
+- `main` contains release-ready code.
+- `dev` is the integration branch.
+- Create `feat/<short-description>` for new work or
+  `fix/<short-description>` for bug fixes, branching from `dev`.
+- Open pull requests from `feat/*` or `fix/*` into `dev`. Once verified, open
+  a pull request from `dev` into `main`.
+- PlatformIO CI builds push and pull-request changes targeting `main` or `dev`.
+  It compiles with `include/secrets.example.h`; no real WiFi credentials are
+  needed or exposed in CI.
+
 ## Build and upload
 
 ```sh
