@@ -1,0 +1,46 @@
+name: PlatformIO CI
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - "feat/**"
+      - "fix/**"
+      - "feature/**"
+  pull_request:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platformio-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Test CSI serial frame parser
+        run: python -m unittest discover -s tools -p 'test_*.py'
+
+      - name: Install PlatformIO
+        run: python -m pip install platformio
+
+      - name: Create build-only WiFi configuration
+        run: cp include/secrets.example.h include/secrets.h
+
+      - name: Build firmware
+        run: pio run
