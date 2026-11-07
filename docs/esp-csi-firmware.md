@@ -32,7 +32,7 @@ collector. Flashing the example replaces the clock, OLED, and `CSI1` stream.
 | This firmware | `csi_recv_router` example |
 |---|---|
 | PlatformIO Arduino, `espressif32@7.0.1`. `setup()`/`loop()` coordinate Wi-Fi, SNTP, OLED, and CSI. | ESP-IDF `app_main()` and CMake. Flashing it removes this application. |
-| LLTF only, AP-BSSID filter, 100 ms gateway ping, binary `CSI1` frames at 115200 after `CSI_STREAM_START`. | Decimal `CSI_DATA` text. Its default console baud is 921600. |
+| LLTF only, AP-BSSID filter, 100 ms gateway ping, one binary `CSI1` frame per UDP datagram to the configured host. UART at 115200 carries status logs only. | Decimal `CSI_DATA` text. Its default console baud is 921600. |
 | CSI is already enabled in the prebuilt Arduino Wi-Fi library. AMPDU and RX-buffer settings from the example `sdkconfig.defaults` are not applied. | Enables CSI in `sdkconfig.defaults` and can change Wi-Fi buffer and AMPDU options. |
 
 The router example's component manifest declares ESP-IDF `>=4.4.1` and the

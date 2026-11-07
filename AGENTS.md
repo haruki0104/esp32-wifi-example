@@ -13,8 +13,8 @@ From the repo root:
 
 ## Contracts
 
-- UART capture is 115200. After `CSI_STREAM_START`, the sketch emits only binary `CSI1` frames until Wi-Fi loss. The CSI RX callback only copies into the FreeRTOS queue; `CsiCollector::writePending` is the only place that writes frame bytes. Text between a header and its payload splits the frame. Upload speed in `platformio.ini` is 921600 and is not the capture baud. One serial reader at a time.
-- Keep `FrameHeader` in `src/csi/CsiCollector.cpp` and `HEADER` in `tools/csi_read.py` in lockstep (packed 24-byte little-endian header, magic `CSI1`, chip `1` on this ESP32). The host tool stores payload hex and does not decode I/Q.
+- UART is 115200 for boot/status logs; CSI frames are sent over UDP, not serial. `CSI_HOST_IP` and `CSI_UDP_PORT` in `include/secrets.h` select the host receiver. Each UDP datagram contains exactly one `CSI1` frame. The CSI RX callback only copies into the FreeRTOS queue; `CsiCollector::sendPending` is the only place that transmits frame bytes. UDP can lose datagrams; use sequence and drop counts to detect gaps. Upload speed in `platformio.ini` is 921600 and is not the log or UDP capture rate.
+- Keep `FrameHeader` in `src/csi/CsiCollector.cpp` and `HEADER` in `tools/csi_read.py` in lockstep (packed 24-byte little-endian header, magic `CSI1`, chip `1` on this ESP32). `tools/csi_udp_read.py` validates that same frame. The host tools store payload hex and do not decode I/Q.
 - Leave `WiFi.setSleep(false)` in place while CSI is running. Leave the POSIX zone string `CST-8` (Asia/Taipei). `CST+8` is the opposite offset; `configTzTime` takes a POSIX string, not an IANA name.
 - `src/sketch_jul29a.ino` is the only file that calls across `src/network/`, `src/time/`, `src/csi/`, and `src/display/`.
 - OLED pins come from `-D OLED_SDA` / `-D OLED_SCL` in `platformio.ini`. Missing flags fail the build.

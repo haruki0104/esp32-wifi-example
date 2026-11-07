@@ -2,6 +2,7 @@ import struct
 import unittest
 
 from csi_read import CsiFrameParser, HEADER, frame_to_record
+from csi_udp_read import parse_frame_datagram
 
 
 def make_frame(
@@ -83,6 +84,24 @@ class CsiFrameParserTests(unittest.TestCase):
         self.assertEqual(record["source_mac"], "aa:bb:cc:dd:ee:ff")
         self.assertTrue(record["first_word_invalid"])
         self.assertIn("captured_at_utc", record)
+
+    def test_udp_datagram_contains_one_complete_frame(self):
+        frame = parse_frame_datagram(make_frame(invalid=1))
+
+        self.assertEqual(frame.sequence, 7)
+        self.assertEqual(frame.payload, b"\x01\xff\x7f")
+        self.assertTrue(frame.first_word_invalid)
+
+    def test_udp_parser_rejects_trailing_or_missing_payload(self):
+        with self.assertRaisesRegex(ValueError, "length does not match"):
+            parse_frame_datagram(make_frame() + b"\x00")
+
+        with self.assertRaisesRegex(ValueError, "shorter than"):
+            parse_frame_datagram(b"CSI1")
+
+    def test_udp_parser_rejects_unexpected_chip(self):
+        with self.assertRaisesRegex(ValueError, "unexpected chip ID"):
+            parse_frame_datagram(make_frame(chip=2))
 
 
 if __name__ == "__main__":
