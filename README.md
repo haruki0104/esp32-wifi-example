@@ -2,7 +2,7 @@
 
 PlatformIO firmware for an ESP32 Dev Module and a 128x64 SSD1306 OLED. It
 joins the configured Wi-Fi network, shows Asia/Taipei local time, and streams
-Channel State Information from that access point to the host.
+Channel State Information from that access point to a host computer over Wi-Fi.
 
 The current target is the original ESP32 (`esp32dev`). An ESP32-S3-DevKitC-1
 environment is reserved in `platformio.ini` but is not built: its module
@@ -14,16 +14,21 @@ variant and OLED pins are not known, and ESP32-S3 has no GPIO 22.
 - Starts SNTP and renders local time. The zone string is POSIX `CST-8`.
 - After the gateway address is available, enables LLTF CSI, pings the gateway
   every 100 ms, and keeps only packets from the associated AP BSSID.
+- Sends each CSI frame as a UDP datagram to the configured host IPv4 address
+  and port. USB serial is for boot/status logs and firmware upload, not CSI data.
 - Shows the clock on the OLED, with CSI rate and recent drops on the bottom
   line. Before capture starts, that line reads `CSI: waiting`.
-- Prints boot text, then `CSI_STREAM_START`, then only binary `CSI1` frames.
-  Wi-Fi loss stops the stream, prints text again, and retries the connection.
+- Prints boot and status text, including `CSI_UDP_START` when transmission
+  starts. Wi-Fi loss stops capture and retries the connection.
 
 OLED initialization failure hangs in `setup`. A failed NTP wait does not block
 CSI once the gateway address is known. This firmware does not classify
 presence or posture; see
 [docs/csi-human-sensing.md](docs/csi-human-sensing.md) before treating a
-capture as a sensing result.
+capture as a sensing result. The proposed MQTT distribution and live CSI
+visualization work is tracked in
+[docs/csi-mqtt-visualization-roadmap.md](docs/csi-mqtt-visualization-roadmap.md);
+it is a plan, not an implemented feature.
 
 ## Hardware and display
 
@@ -39,7 +44,8 @@ reset pin. The 128x64 screen shows:
 - `src/sketch_jul29a.ino` — startup, reconnect, and the only cross-layer calls.
 - `src/network/` — station connection and connection state.
 - `src/time/` — SNTP startup, sync check, and local-time access.
-- `src/csi/` — CSI configuration, gateway ping, callback snapshot, and frames.
+- `src/csi/` — CSI configuration, gateway ping, callback snapshot, and UDP
+  frame transmission.
 - `src/display/` — OLED initialization and rendering only.
 
 Display code does not join Wi-Fi or start CSI. CSI and network code do not
@@ -49,8 +55,9 @@ replaces this application. See
 
 ## CSI frame
 
-Each frame is a 24-byte little-endian header followed by the unmodified CSI
-buffer:
+Each UDP datagram contains one 24-byte little-endian header followed by the
+unmodified CSI buffer. The frame format remains compatible with the serial
+reader and existing captures:
 
 | Field | Meaning |
 |---|---|
@@ -86,27 +93,45 @@ guess their I/Q layout.
 ```sh
 pio run -e esp32dev
 pio run -e esp32dev -t upload --upload-port /dev/ttyUSBx
-python3 -m pip install -r tools/requirements-csi.txt
-python3 tools/csi_read.py -p /dev/ttyUSBx --count 1000
 ```
 
-Replace `/dev/ttyUSBx` with the board's serial device. The checked ESP32 Dev
-Module enumerates as a CP2102, commonly `/dev/ttyUSB1`, at 115200 baud. Close
-every other serial monitor before capture; a second reader splits the binary
-stream.
+Replace `/dev/ttyUSBx` with the board's serial device. USB serial is used for
+firmware upload and status logs; it is not used to capture CSI.
 
 Before building, copy `include/secrets.example.h` to `include/secrets.h` and
-fill in the Wi-Fi credentials. The sketch includes that header. The real file
-is gitignored, and a missing file fails compilation instead of using the
-example values. Connection and NTP timeouts are constants in the sketch.
+fill in the Wi-Fi credentials and set `CSI_HOST_IP` to the host computer's
+local IPv4 address. `CSI_UDP_PORT` defaults to `5005`. Use a stable host address
+or a DHCP reservation so the ESP32 continues to find the receiver. If omitted
+from an existing `secrets.h`, the firmware defaults to `192.168.1.100:5005`;
+override the IP for your LAN. The sketch includes that header. The real file is
+gitignored, and a missing file fails compilation instead of using the example
+Wi-Fi credentials. Connection and NTP timeouts are constants in the sketch.
 
-`tools/csi_read.py` writes one JSON object per frame to
+Start the host receiver before the ESP32 sends data. Allow inbound UDP on the
+selected port in the host firewall, and keep both devices on a network that
+allows client-to-client traffic:
+
+```sh
+python3 tools/csi_udp_read.py --listen 0.0.0.0 --port 5005 --count 1000
+```
+
+Start this receiver before booting or resetting the ESP32.
+`--listen` defaults to `0.0.0.0`; omit `--count` to capture until Ctrl-C or use
+`--timeout 60` for a 60-second run. `tools/csi_udp_read.py` writes one JSON
+object per valid datagram to
 `captures/csi-<UTC timestamp>.jsonl` unless `-o` selects another path. With
-no `--count` or `--timeout`, it runs until Ctrl-C. `--timeout 60` stops after
-60 seconds. Capture files are gitignored. Fields include host UTC receive
-time, sequence, RSSI, channel, source MAC, drop count, and the raw payload
-hex. That timestamp is when the computer handled the frame, not the radio
-reception time.
+no `--count` or `--timeout`, it runs until Ctrl-C. Fields include host UTC
+receive time, ESP32 sender IP/port, sequence, RSSI, channel, source MAC, drop
+count, and raw payload hex. That timestamp is when the computer handled the
+datagram, not the radio reception time. UDP does not retransmit lost datagrams;
+use sequence numbers and drop counts to identify gaps. This first version is
+intended for a trusted local network, not an untrusted or internet-facing
+network. The OLED CSI rate counts frames queued locally, not confirmed host
+receipts; UDP has no acknowledgement.
+
+The older `tools/csi_read.py` utility remains available for serial captures
+from compatible firmware; install `tools/requirements-csi.txt` to use it. The
+current firmware sends CSI over UDP. Capture files are gitignored.
 
 Parser tests:
 

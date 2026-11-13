@@ -8,15 +8,17 @@ them only where occupants know about and consent to the sensing.
 
 The current ESP32 firmware associates with the configured access point, pings
 its gateway every 100 ms, filters received CSI to the access point BSSID, and
-streams binary `CSI1` frames over the board UART at 115200. The computer-side
-[`csi_read.py`](../tools/csi_read.py) saves each frame as one JSONL record in
-`captures/`. It preserves the raw payload rather than silently interpreting it.
+sends each binary `CSI1` frame as a UDP datagram over the local Wi-Fi network.
+The computer-side
+[`csi_udp_read.py`](../tools/csi_udp_read.py) saves each frame as one JSONL
+record in `captures/`. It preserves the raw payload rather than silently
+interpreting it. USB serial carries status logs only, not CSI data.
 
 The capture currently contains host UTC receive time, sequence number, RSSI,
 Wi-Fi channel, source MAC, `first_word_invalid`, firmware drop count, payload
-length, and raw payload bytes encoded as hex. The timestamp is when the host
-process received the serial frame; this firmware frame does not include the
-radio's CSI reception timestamp.
+length, sender IP/port, and raw payload bytes encoded as hex. The timestamp is
+when the host process received the datagram; this firmware frame does not
+include the radio's CSI reception timestamp.
 
 The firmware enables LLTF CSI only. In this ESP32 configuration a 128-byte
 payload is 64 pairs of signed bytes. Espressif documents each pair as
@@ -104,15 +106,16 @@ or raw data longer than necessary.
 ## Example collection
 
 ```sh
-python3 -m pip install -r tools/requirements-csi.txt
-python3 tools/csi_read.py -p /dev/ttyUSB1 --count 1000
-python3 tools/csi_read.py -p /dev/ttyUSB1 --timeout 300 -o captures/empty-room-01.jsonl
+python3 tools/csi_udp_read.py --listen 0.0.0.0 --port 5005 --count 1000
+python3 tools/csi_udp_read.py --timeout 300 -o captures/empty-room-01.jsonl
 ```
 
-Close any other serial monitor before capture. The default capture continues
-until Ctrl-C; `--count` and `--timeout` can bound a run. Capture files are
-ignored by Git. Keep session notes separately and avoid recording personal
-identifiers.
+Start the receiver before the ESP32; configure `CSI_HOST_IP` in the board's
+`include/secrets.h` to the host's stable local IPv4 address and allow inbound
+UDP port 5005 in its firewall. The default capture continues until Ctrl-C;
+`--count` and `--timeout` can bound a run. UDP has no retransmission, so inspect
+sequence gaps and firmware drop counts. Capture files are ignored by Git. Keep
+session notes separately and avoid recording personal identifiers.
 
 ## Primary sources
 

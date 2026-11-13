@@ -16,6 +16,7 @@ constexpr size_t kSlotCount = 4;
 constexpr size_t kMaxLen = 512;
 constexpr uint32_t kPingIntervalMs = 100;
 constexpr int kFramesPerLoop = 4;
+constexpr uint16_t kLocalUdpPort = 5006;
 
 #if CONFIG_IDF_TARGET_ESP32
 constexpr uint8_t kChipId = 1;
@@ -175,10 +176,15 @@ void stopPing() {
 
 }  // namespace
 
-bool CsiCollector::start() {
+bool CsiCollector::start(const char* hostIp, uint16_t hostPort) {
   if (running_) {
     return true;
   }
+
+  if (hostIp == nullptr || hostPort == 0 || !hostIp_.fromString(hostIp)) {
+    return false;
+  }
+  hostPort_ = hostPort;
 
   const IPAddress gateway = WiFi.gatewayIP();
   if (gateway == IPAddress(0, 0, 0, 0)) {
@@ -214,11 +220,17 @@ bool CsiCollector::start() {
     esp_wifi_set_csi_rx_cb(nullptr, nullptr);
     return false;
   }
+  if (!udp_.begin(kLocalUdpPort)) {
+    stopPing();
+    esp_wifi_set_csi_rx_cb(nullptr, nullptr);
+    return false;
+  }
 
   accepting = true;
   if (esp_wifi_set_csi(true) != ESP_OK) {
     accepting = false;
     stopPing();
+    udp_.stop();
     esp_wifi_set_csi_rx_cb(nullptr, nullptr);
     return false;
   }
@@ -241,6 +253,7 @@ void CsiCollector::stop() {
   esp_wifi_set_csi_rx_cb(nullptr, nullptr);
   vTaskDelay(1);
   stopPing();
+  udp_.stop();
   returnReadySlots();
   running_ = false;
 }
@@ -280,7 +293,7 @@ void CsiCollector::sampleStatus(uint32_t& ratePerSec, uint16_t& recentDrops) {
   recentDrops = cachedDrops_;
 }
 
-void CsiCollector::writePending() {
+void CsiCollector::sendPending() {
   if (!running_ || readyQueue == nullptr || freeQueue == nullptr) {
     return;
   }
@@ -312,9 +325,19 @@ void CsiCollector::writePending() {
     header.drops = dropsSince > 0xFFFF ? 0xFFFF
                                        : static_cast<uint16_t>(dropsSince);
 
-    Serial.write(reinterpret_cast<const uint8_t*>(&header), sizeof(header));
-    if (slot.len > 0) {
-      Serial.write(reinterpret_cast<const uint8_t*>(slot.data), slot.len);
+    bool sent = udp_.beginPacket(hostIp_, hostPort_) == 1;
+    if (sent) {
+      sent = udp_.write(reinterpret_cast<const uint8_t*>(&header),
+                        sizeof(header)) == sizeof(header);
+      if (slot.len > 0) {
+        sent = udp_.write(reinterpret_cast<const uint8_t*>(slot.data),
+                          slot.len) == slot.len &&
+               sent;
+      }
+      sent = udp_.endPacket() == 1 && sent;
+    }
+    if (!sent) {
+      noteDrop();
     }
     xQueueSend(freeQueue, &index, 0);
   }
