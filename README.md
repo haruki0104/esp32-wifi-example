@@ -28,7 +28,10 @@ presence or posture; see
 capture as a sensing result. The proposed MQTT distribution and live CSI
 visualization work is tracked in
 [docs/csi-mqtt-visualization-roadmap.md](docs/csi-mqtt-visualization-roadmap.md);
-it is a plan, not an implemented feature.
+Phase 0 is decided and the Phase 1 frame/publisher seam is implemented
+(`src/csi/CsiFrame.h`, `src/csi/FramePublisher.h`, host `tools/csi_frame.py`),
+while MQTT publishing and plotting are not implemented yet. UDP remains the
+default transport.
 
 ## Hardware and display
 
