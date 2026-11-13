@@ -218,7 +218,7 @@ def main():
     if frame_count == 0:
         print(
             "No CSI frames received. Check that the ESP32 reports "
-            "CSI_STREAM_START and that the port/baud/chip match.",
+            "CSI_UDP_START and that the UDP host IP/port and chip match.",
             file=sys.stderr,
         )
         return 1

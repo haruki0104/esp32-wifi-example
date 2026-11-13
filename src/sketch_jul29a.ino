@@ -2,6 +2,13 @@
 
 #include <secrets.h>
 
+#ifndef CSI_HOST_IP
+#define CSI_HOST_IP "192.168.1.100"
+#endif
+#ifndef CSI_UDP_PORT
+#define CSI_UDP_PORT 5005
+#endif
+
 #include "csi/CsiCollector.h"
 #include "display/OledDisplay.h"
 #include "network/WifiConnection.h"
@@ -72,8 +79,9 @@ void connectAndStartClock() {
 
   const uint32_t gatewayWaitStarted = millis();
   while (!csi.isRunning() && millis() - gatewayWaitStarted < 2000) {
-    if (csi.start()) {
-      Serial.println("CSI_STREAM_START");
+    if (csi.start(CSI_HOST_IP, CSI_UDP_PORT)) {
+      Serial.printf("CSI_UDP_START %s:%u\n", CSI_HOST_IP,
+                    static_cast<unsigned>(CSI_UDP_PORT));
       streamStarted = true;
     } else {
       delay(50);
@@ -111,12 +119,13 @@ void loop() {
     return;
   }
 
-  if (!streamStarted && csi.start()) {
-    Serial.println("CSI_STREAM_START");
+  if (!streamStarted && csi.start(CSI_HOST_IP, CSI_UDP_PORT)) {
+    Serial.printf("CSI_UDP_START %s:%u\n", CSI_HOST_IP,
+                  static_cast<unsigned>(CSI_UDP_PORT));
     streamStarted = true;
   }
   if (streamStarted) {
-    csi.writePending();
+    csi.sendPending();
   }
 
   if (millis() - lastDisplayUpdate >= kDisplayIntervalMs) {
