@@ -14,6 +14,24 @@
 #include "network/WifiConnection.h"
 #include "time/NetworkClock.h"
 
+// Fallback Wi-Fi networks come from gitignored include/secrets.h (see
+// include/secrets.example.h). Slots without credentials are skipped, so a
+// single-network setup only defines WIFI_SSID/WIFI_PASSWORD.
+struct WifiCredential {
+  const char* ssid;
+  const char* password;
+};
+
+WifiCredential kWifiNetworks[] = {
+    {WIFI_SSID, WIFI_PASSWORD},
+#ifdef WIFI_SSID2
+    {WIFI_SSID2, WIFI_PASSWORD2},
+#endif
+#ifdef WIFI_SSID3
+    {WIFI_SSID3, WIFI_PASSWORD3},
+#endif
+};
+
 namespace {
 
 constexpr uint32_t kWifiTimeoutMs = 15000;
@@ -43,9 +61,16 @@ void formatCsiStatus(char* buffer, size_t size) {
 void connectAndStartClock() {
   csi.stop();
   streamStarted = false;
-  display.showStatus("Connecting WiFi...", WIFI_SSID);
-  if (!wifi.connect(WIFI_SSID, WIFI_PASSWORD, kWifiTimeoutMs)) {
+  bool wifi_ok = false;
+  for (const auto& net : kWifiNetworks) {
+    display.showStatus("Connecting WiFi...", net.ssid);
+    if (wifi.connect(net.ssid, net.password, kWifiTimeoutMs)) {
+      wifi_ok = true;
+      break;
+    }
     display.showStatus("WiFi connection", "failed", "Retrying...");
+  }
+  if (!wifi_ok) {
     return;
   }
 

@@ -48,6 +48,17 @@ void OledDisplay::showStatus(const char* line1, const char* line2,
   screen.display();
 }
 
+void OledDisplay::showStatus(const String& line1) { showStatus(line1.c_str()); }
+
+void OledDisplay::showStatus(const String& line1, const String& line2,
+                             const String& line3) {
+  showStatus(line1.c_str(), line2.c_str(), line3.c_str());
+}
+
+void OledDisplay::showStatusF(const String& line) { showStatus(line); }
+
+void OledDisplay::showStatusF(const char* line) { showStatus(line); }
+
 void OledDisplay::showClock(const tm* localTime, const char* statusLine) {
   screen.clearDisplay();
   screen.setTextColor(WHITE);
