@@ -338,7 +338,7 @@ def run_plot(state, window, interval_ms, chip_info="", vmax=None,
             t0 = t_hist[0]
             zline.set_data([t - t0 for t in t_hist], list(z_hist))
             ax_z.relim()
-            ax_z.autoscale_view(enable=True, axis="y")
+            ax_z.autoscale_view()
             ax_z.set_xlim(*rolling_xlim(tick - t_hist[0], z_span))
             banner.set_text("ACTIVE" if det_state["live"] else "quiet")
             banner.set_bbox(dict(boxstyle="round",
