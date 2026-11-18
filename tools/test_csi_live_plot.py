@@ -1,6 +1,6 @@
 import unittest
 
-from csi_live_plot import waterfall_view
+from csi_live_plot import rolling_xlim, waterfall_view
 
 
 class WaterfallViewTests(unittest.TestCase):
@@ -41,6 +41,13 @@ class WaterfallViewTests(unittest.TestCase):
         self.assertTrue(diverging)
         self.assertEqual(display.shape, (1, 2))
         self.assertLess(lo, hi)
+
+    def test_rolling_xlim_grows_then_scrolls(self):
+        self.assertEqual(rolling_xlim(10.0, 60.0), (0.0, 60.0))
+        self.assertEqual(rolling_xlim(60.0, 60.0), (0.0, 60.0))
+        self.assertEqual(rolling_xlim(90.0, 60.0), (30.0, 90.0))
+        with self.assertRaises(ValueError):
+            rolling_xlim(10.0, 0.0)
 
     def test_rejects_bad_input(self):
         with self.assertRaises(ValueError):

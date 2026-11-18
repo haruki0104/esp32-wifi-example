@@ -37,7 +37,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from csi_detect import LiveDetector
+from csi_detect import LiveDetector, resolve_params
 from csi_frame import amplitude_spectrum
 from csi_read import frame_to_record
 from csi_udp_read import parse_frame_datagram
@@ -149,6 +149,16 @@ def waterfall_view(arr, vmax=None, diff_mode=False):
     return display, lo, hi, True
 
 
+def rolling_xlim(t_last, span_s):
+    """Fixed-width x window ending at t_last (scrolls once filled)."""
+    span = float(span_s)
+    if span <= 0:
+        raise ValueError("span must be positive")
+    if t_last <= span:
+        return (0.0, span)
+    return (float(t_last) - span, float(t_last))
+
+
 def udp_worker(state, listen, port, chip, stop_event, output_file=None):
     """Background thread: recv CSI1 datagrams, push spectra, optionally archive."""
     out_handle = None
@@ -247,7 +257,8 @@ def replay_worker(state, path, rate_hz, loop, stop_event):
 
 
 def run_plot(state, window, interval_ms, chip_info="", vmax=None,
-             diff_mode=False, detect_mode=False):
+             diff_mode=False, detect_mode=False, detect_params=None,
+             z_span=60.0):
     import time as _time
 
     import matplotlib
@@ -288,7 +299,10 @@ def run_plot(state, window, interval_ms, chip_info="", vmax=None,
     ax_water.set_ylabel(f"recent frames (window={window})")
     fig.colorbar(water_img, ax=ax_water,
                  label="\u0394 amplitude vs baseline" if diff_mode else "amplitude")
-    detector = LiveDetector() if detect_mode else None
+    live_keys = ("base_s", "short_s", "z_enter", "z_exit",
+                 "min_dur_s", "warmup_s")
+    detector = (LiveDetector(**{k: detect_params[k] for k in live_keys})
+                if detect_mode and detect_params else None)
     z_hist = deque(maxlen=600)
     t_hist = deque(maxlen=600)
     fed = 0
@@ -324,7 +338,8 @@ def run_plot(state, window, interval_ms, chip_info="", vmax=None,
             t0 = t_hist[0]
             zline.set_data([t - t0 for t in t_hist], list(z_hist))
             ax_z.relim()
-            ax_z.autoscale_view()
+            ax_z.autoscale_view(enable=True, axis="y")
+            ax_z.set_xlim(*rolling_xlim(tick - t_hist[0], z_span))
             banner.set_text("ACTIVE" if det_state["live"] else "quiet")
             banner.set_bbox(dict(boxstyle="round",
                                  facecolor="tomato" if det_state["live"]
@@ -384,6 +399,12 @@ def main(argv=None):
                              "z-score with ACTIVE banner (baseline is "
                              "the rolling window; use --window 300+ "
                              "for a slower baseline)")
+    parser.add_argument("--detect-config", type=Path, default=None,
+                        help="JSON threshold file for --detect (default: "
+                             "shipped tools/csi_detect.json when present)")
+    parser.add_argument("--zspan", type=float, default=60.0,
+                        help="live z panel shows the last N seconds "
+                             "(rolling window, default: 60)")
     parser.add_argument("--diff", action="store_true",
                         help="waterfall shows deviation from the window "
                              "baseline instead of raw amplitude")
@@ -405,6 +426,15 @@ def main(argv=None):
         parser.error("--window must be >= 2")
     if args.vmax is not None and args.vmax <= 0:
         parser.error("--vmax must be positive")
+    if args.zspan <= 0:
+        parser.error("--zspan must be positive")
+    detect_params = None
+    if args.detect:
+        try:
+            detect_params = resolve_params({}, args.detect_config)
+        except ValueError as error:
+            parser.error(str(error))
+        print(f"Live detection thresholds: {detect_params}")
 
     state = LiveState(window=args.window)
     stop_event = threading.Event()
@@ -430,7 +460,8 @@ def main(argv=None):
     worker.start()
     try:
         run_plot(state, args.window, args.interval, chip_info=f"  chip={args.chip}",
-                 vmax=args.vmax, diff_mode=args.diff, detect_mode=args.detect)
+                 vmax=args.vmax, diff_mode=args.diff, detect_mode=args.detect,
+                 detect_params=detect_params, z_span=args.zspan)
     except KeyboardInterrupt:
         print("\nStopped by user.")
     finally:

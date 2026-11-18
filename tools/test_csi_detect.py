@@ -1,9 +1,11 @@
 import unittest
+from pathlib import Path
 
 import numpy as np
 
-from csi_detect import (LiveDetector, detect, score_against_marks,
-                         trailing_stat)
+from csi_detect import (DETECT_DEFAULTS, LiveDetector, default_config_path,
+                         detect, load_config_file, resolve_params,
+                         score_against_marks, trailing_stat)
 
 
 def synthetic(n=300, fps=10.0, carriers=8, burst_at=(10.0, 20.0),
@@ -60,6 +62,44 @@ class DetectTests(unittest.TestCase):
         act = [det.update(row, float(t))[1]
                for row, t in zip(matrix, times)]
         self.assertFalse(any(act))
+
+    def test_config_file_overrides_defaults(self):
+        import json
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "custom.json"
+            path.write_text(json.dumps({"z_enter": 9.0}), encoding="utf-8")
+            params = resolve_params({}, path)
+            self.assertEqual(params["z_enter"], 9.0)
+            self.assertEqual(params["z_exit"], DETECT_DEFAULTS["z_exit"])
+
+    def test_cli_wins_over_config_file(self):
+        import json
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "custom.json"
+            path.write_text(json.dumps({"z_enter": 9.0, "z_exit": 0.1}),
+                              encoding="utf-8")
+            params = resolve_params({"z_enter": 2.0, "z_exit": None}, path)
+            self.assertEqual(params["z_enter"], 2.0)
+            self.assertEqual(params["z_exit"], 0.1)
+
+    def test_config_rejects_unknown_keys(self):
+        import json
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bad.json"
+            path.write_text(json.dumps({"nope": 1.0}), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_config_file(path)
+            with self.assertRaises(ValueError):
+                resolve_params({}, path)
+
+    def test_shipped_config_loads(self):
+        params = resolve_params({})
+        self.assertEqual(set(params), set(DETECT_DEFAULTS))
+        for value in params.values():
+            self.assertGreater(value, 0)
 
     def test_scoring(self):
         segments = [(11.0, 19.0)]

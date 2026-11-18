@@ -1,0 +1,10 @@
+{
+  "_note": "Adaptive detector thresholds. Base windows must stay well above the longest event; short window is the smoothing scale. Tune by hand, keep under version control. CLI flags override these values.",
+  "base_s": 60.0,
+  "short_s": 3.0,
+  "z_enter": 3.0,
+  "z_exit": 1.5,
+  "min_dur_s": 2.0,
+  "merge_gap_s": 2.0,
+  "warmup_s": 5.0
+}

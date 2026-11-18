@@ -18,6 +18,9 @@ With --mark the detections are scored against posture segments
 
   python3 tools/csi_detect.py captures/csi-amp-pos3-posture.csv \\
       --mark "still:0-10,wave:10-30,still:30-40" --plot /tmp/det.png
+
+Thresholds live in tools/csi_detect.json (versioned, hand-tunable);
+--config selects another file and explicit CLI flags win over the file.
 """
 
 import argparse
@@ -26,6 +29,63 @@ from collections import deque
 from pathlib import Path
 
 from csi_plot_csv import load_matrix, parse_marks
+
+
+DETECT_DEFAULTS = {
+    "base_s": 60.0,
+    "short_s": 3.0,
+    "z_enter": 3.0,
+    "z_exit": 1.5,
+    "min_dur_s": 2.0,
+    "merge_gap_s": 2.0,
+    "warmup_s": 5.0,
+}
+
+
+def default_config_path():
+    """Shipped tuning file next to this script."""
+    return Path(__file__).with_name("csi_detect.json")
+
+
+def load_config_file(path):
+    """Load a JSON threshold file; unknown keys are rejected."""
+    import json
+
+    with open(path, encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: config must be a JSON object")
+    unknown = [k for k in data if not k.startswith("_")
+               and k not in DETECT_DEFAULTS]
+    if unknown:
+        raise ValueError(f"{path}: unknown keys: {sorted(unknown)}")
+    values = {}
+    for key in DETECT_DEFAULTS:
+        if key in data:
+            try:
+                values[key] = float(data[key])
+            except (TypeError, ValueError):
+                raise ValueError(f"{path}: {key} must be a number")
+    return values
+
+
+def resolve_params(cli_values, config_path=None):
+    """Merge built-in defaults <- JSON file <- explicit CLI flags.
+
+    cli_values maps threshold names to float or None (None keeps the
+    file/default value). config_path None means the shipped
+    tools/csi_detect.json when it exists.
+    """
+    params = dict(DETECT_DEFAULTS)
+    path = Path(config_path) if config_path else default_config_path()
+    if path.exists():
+        params.update(load_config_file(path))
+    for key, value in cli_values.items():
+        if value is not None:
+            if key not in DETECT_DEFAULTS:
+                raise ValueError(f"unknown threshold: {key}")
+            params[key] = float(value)
+    return params
 
 
 def trailing_median_mad(matrix, times, window_s, min_frames=5):
@@ -259,15 +319,20 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("csv", type=Path)
-    parser.add_argument("--base", type=float, default=60.0,
+    parser.add_argument("--config", type=Path, default=None,
+                        help="JSON threshold file (default: shipped "
+                             "tools/csi_detect.json when present)")
+    parser.add_argument("--base", type=float, default=None,
                         help="trailing baseline window in seconds (default: 60)")
-    parser.add_argument("--short", type=float, default=3.0,
+    parser.add_argument("--short", type=float, default=None,
                         help="detection smoothing window in seconds (default: 3)")
-    parser.add_argument("--z-enter", type=float, default=3.0)
-    parser.add_argument("--z-exit", type=float, default=1.5)
-    parser.add_argument("--min-dur", type=float, default=2.0,
+    parser.add_argument("--z-enter", type=float, default=None,
+                        help="hysteresis enter level (default: 3.0)")
+    parser.add_argument("--z-exit", type=float, default=None,
+                        help="hysteresis exit level (default: 1.5)")
+    parser.add_argument("--min-dur", type=float, default=None,
                         help="drop detections shorter than this (seconds)")
-    parser.add_argument("--warmup", type=float, default=5.0,
+    parser.add_argument("--warmup", type=float, default=None,
                         help="ignore detections starting before this (seconds)")
     parser.add_argument("--mark", default=None,
                         help="ground-truth 'label:start-end,...' for scoring")
@@ -289,11 +354,17 @@ def main(argv=None):
 
     import numpy as np
 
+    try:
+        params = resolve_params(
+            {"base_s": args.base, "short_s": args.short,
+             "z_enter": args.z_enter, "z_exit": args.z_exit,
+             "min_dur_s": args.min_dur, "warmup_s": args.warmup},
+            args.config)
+    except ValueError as error:
+        parser.error(str(error))
+
     times = np.array(series["ts"], dtype=float)
-    segments, z, info = detect(matrix, times, base_s=args.base,
-                               short_s=args.short, z_enter=args.z_enter,
-                               z_exit=args.z_exit, min_dur_s=args.min_dur,
-                               warmup_s=args.warmup)
+    segments, z, info = detect(matrix, times, **params)
     print(f"{args.csv}: {len(segments)} segment(s)")
     for s, e in segments:
         print(f"  active {s:.1f}s - {e:.1f}s ({e - s:.1f}s)")

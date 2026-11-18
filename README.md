@@ -190,8 +190,16 @@ against a slow trailing baseline (median/MAD) as a z-score with hysteresis
 (enter 3.0, exit 1.5, minimum duration 2 s, 5 s warmup). Only past frames
 are ever used, so the background drift moves the baseline instead of
 tripping the detector. The live baseline is the rolling GUI window, so use
-`--window 300+` for a slower baseline. It is a display aid: the offline
+`--window 300+` for a slower baseline. The z panel shows a rolling time
+window (`--zspan`, default last 60 s) instead of time-since-start, so the
+origin scrolls with the data.
+
+All detection thresholds live in `tools/csi_detect.json` (versioned, hand
+tunable: baseline/smoothing windows, hysteresis levels, minimum duration,
+warmup). Both the offline tool (`--config PATH`) and the live plotter
+(`--detect-config PATH`) read it, and explicit CLI flags override file
+values. It is a display aid: the offline
 tool on a full CSV remains the reference for scoring, and thresholds are
 provisional until walk-through experiments set the operating range. As with
 all CSI work here, this visualizes signal variation; it does not classify
-presence or posture (see `docs/csi-human-sensing.md`).
+presence or posture (see `docs/csi-human-sensing.md`.
