@@ -28,7 +28,8 @@ from pathlib import Path
 
 def load_series(path):
     """Load a csi_time_log.py CSV into a dict of lists."""
-    rows = list(csv.DictReader(Path(path).open(encoding="utf-8")))
+    with open(path, encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
     if not rows:
         raise ValueError(f"no data rows in {path}")
     t = [float(r["unix_time"]) for r in rows]
@@ -140,7 +141,8 @@ def default_output(input_path, compare_path=None):
 def load_matrix(path):
     """Load per-subcarrier matrix (frames x carriers) plus base series."""
     series = load_series(path)
-    rows = list(csv.DictReader(Path(path).open(encoding="utf-8")))
+    with open(path, encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
     sc_cols = sorted(c for c in rows[0].keys()
                       if c.startswith("sc") and c[2:].isdigit())
     if not sc_cols:
