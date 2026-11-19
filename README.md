@@ -183,6 +183,13 @@ window baseline). With `--detect` it adds a third panel: the live detection
 z-score with an ACTIVE/quiet banner, plus a `DET:ACTIVE` flag in the status
 line.
 
+`--output/-o PATH` archives every received frame as the same JSONL records
+as `tools/csi_udp_read.py` while plotting. Without it the plotter keeps only
+the rolling window in memory (`--window` frames, a few seconds) and writes
+nothing, so the run cannot be re-scored offline afterwards; use
+`-o captures/live-<UTC>.jsonl` for any session whose data matters. `--replay`
+reads a capture and never writes one.
+
 The live detector runs the same causal algorithm as the offline prototype
 (`tools/csi_detect.py`): each frame's energy (mean absolute deviation from
 the trailing per-carrier median) is median-smoothed over 3 s and compared
@@ -202,4 +209,4 @@ values. It is a display aid: the offline
 tool on a full CSV remains the reference for scoring, and thresholds are
 provisional until walk-through experiments set the operating range. As with
 all CSI work here, this visualizes signal variation; it does not classify
-presence or posture (see `docs/csi-human-sensing.md`.
+presence or posture (see `docs/csi-human-sensing.md`).
