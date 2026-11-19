@@ -77,8 +77,15 @@ def resolve_params(cli_values, config_path=None):
     tools/csi_detect.json when it exists.
     """
     params = dict(DETECT_DEFAULTS)
-    path = Path(config_path) if config_path else default_config_path()
-    if path.exists():
+    if config_path:
+        path = Path(config_path)
+        if not path.exists():
+            raise ValueError(f"config file not found: {path}")
+    else:
+        path = default_config_path()
+        if not path.exists():
+            path = None
+    if path is not None:
         params.update(load_config_file(path))
     for key, value in cli_values.items():
         if value is not None:
@@ -219,6 +226,7 @@ class LiveDetector:
         self.t0 = None
         self.active = False
         self.active_since = 0.0
+        self.width = None
         self.z = 0.0
 
     def update(self, spectrum, t):
@@ -226,6 +234,15 @@ class LiveDetector:
         import numpy as np
 
         spec = np.asarray(list(spectrum), dtype=float)
+        if self.width is None or len(spec) != self.width:
+            self.width = len(spec)
+            self.times.clear()
+            self.spectra.clear()
+            self.energy_hist.clear()
+            self.short_hist.clear()
+            self.active = False
+            self.z = 0.0
+            self.t0 = float(t)
         if self.t0 is None:
             self.t0 = float(t)
         self.times.append(float(t))

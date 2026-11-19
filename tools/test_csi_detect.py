@@ -95,6 +95,20 @@ class DetectTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 resolve_params({}, path)
 
+    def test_explicit_missing_config_raises(self):
+        with self.assertRaises(ValueError):
+            resolve_params({}, "/tmp/does-not-exist-csi-detect.json")
+
+    def test_detector_resets_on_width_change(self):
+        matrix8, times = synthetic(n=20, fps=10.0, carriers=8)
+        det = LiveDetector(base_s=30.0, short_s=1.0, warmup_s=0.0)
+        for row, t in zip(matrix8, times):
+            det.update(list(row), float(t))
+        narrow = [1.0, 2.0, 3.0, 4.0]
+        z, live = det.update(narrow, float(times[-1]) + 0.1)
+        self.assertTrue(abs(z) < 1e9 and z == z)  # finite, no raise
+        self.assertFalse(live)
+
     def test_shipped_config_loads(self):
         params = resolve_params({})
         self.assertEqual(set(params), set(DETECT_DEFAULTS))
