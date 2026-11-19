@@ -1,7 +1,15 @@
 import unittest
 from pathlib import Path
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError as error:
+    # The detector needs the host plot stack; without it the documented
+    # verify command must report a skip, not a pile of errors.
+    raise unittest.SkipTest(
+        f"host analysis deps missing ({error.name}); "
+        "install tools/requirements-plot.txt"
+    ) from error
 
 from csi_detect import (DETECT_DEFAULTS, LiveDetector, default_config_path,
                          detect, load_config_file, resolve_params,

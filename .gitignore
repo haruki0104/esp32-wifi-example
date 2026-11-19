@@ -4,3 +4,9 @@ include/secrets.h
 captures/
 __pycache__/
 tools/__pycache__/
+
+# Editor/tooling output from cscope and ctags runs.
+cscope.out
+cscope.in.out
+cscope.po.out
+tags

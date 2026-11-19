@@ -1,5 +1,13 @@
 import unittest
 
+try:
+    import numpy  # noqa: F401  (waterfall_view is numpy-based)
+except ImportError as error:
+    raise unittest.SkipTest(
+        f"host analysis deps missing ({error.name}); "
+        "install tools/requirements-plot.txt"
+    ) from error
+
 from csi_live_plot import rolling_xlim, waterfall_view
 
 
