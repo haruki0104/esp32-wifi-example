@@ -30,8 +30,9 @@ visualization work is tracked in
 [docs/csi-mqtt-visualization-roadmap.md](docs/csi-mqtt-visualization-roadmap.md);
 Phase 0 is decided and the Phase 1 frame/publisher seam is implemented
 (`src/csi/CsiFrame.h`, `src/csi/FramePublisher.h`, host `tools/csi_frame.py`),
-while MQTT publishing and plotting are not implemented yet. UDP remains the
-default transport.
+while MQTT publishing is not implemented yet. UDP remains the default
+transport. Host-side plotting and analysis tools exist; see
+"Host analysis tools" below.
 
 ## Hardware and display
 
@@ -141,3 +142,64 @@ Parser tests:
 ```sh
 python3 -m unittest discover -s tools -p 'test_*.py'
 ```
+
+## Host analysis tools
+
+Beyond archiving raw frames, the host can log time-series amplitude,
+plot captures, and run an adaptive activity detector prototype. All host
+analysis needs `numpy` and `matplotlib`:
+
+```sh
+python3 -m pip install -r tools/requirements-plot.txt
+```
+
+### Time-vs-amplitude log
+
+`tools/csi_time_log.py` subscribes to the same UDP stream and appends one
+CSV row per frame: host receive time, sequence and gap count, RSSI,
+channel, per-frame amplitude mean/std/min/max, and firmware drops.
+`--per-subcarrier` adds one column per subcarrier; `--replay` converts an
+existing JSONL capture without needing the board:
+
+```sh
+python3 tools/csi_time_log.py --port 5005 -o captures/amp.csv --per-subcarrier
+python3 tools/csi_time_log.py --replay captures/csi-xxx.jsonl -o /tmp/amp.csv
+```
+
+### Capture plots
+
+`tools/csi_plot_csv.py` renders headless PNGs from those CSVs without
+opening a window: single-file charts, two-file overlays (`--compare`), and
+time-vs-subcarrier heatmaps (`--heatmap`, needs `--per-subcarrier`
+columns) with posture segments shaded via
+`--mark "still:0-10,wave:10-30,still:30-40"`.
+
+### Live plot and live detector
+
+`tools/csi_live_plot.py` draws the per-frame amplitude spectrum and a
+scrolling waterfall in real time (`--vmax` fixes the color scale so temporal
+changes are not renormalized away; `--diff` paints deviation from the
+window baseline). With `--detect` it adds a third panel: the live detection
+z-score with an ACTIVE/quiet banner, plus a `DET:ACTIVE` flag in the status
+line.
+
+The live detector runs the same causal algorithm as the offline prototype
+(`tools/csi_detect.py`): each frame's energy (mean absolute deviation from
+the trailing per-carrier median) is median-smoothed over 3 s and compared
+against a slow trailing baseline (median/MAD) as a z-score with hysteresis
+(enter 3.0, exit 1.5, minimum duration 2 s, 5 s warmup). Only past frames
+are ever used, so the background drift moves the baseline instead of
+tripping the detector. The live baseline is the rolling GUI window, so use
+`--window 300+` for a slower baseline. The z panel shows a rolling time
+window (`--zspan`, default last 60 s) instead of time-since-start, so the
+origin scrolls with the data.
+
+All detection thresholds live in `tools/csi_detect.json` (versioned, hand
+tunable: baseline/smoothing windows, hysteresis levels, minimum duration,
+warmup). Both the offline tool (`--config PATH`) and the live plotter
+(`--detect-config PATH`) read it, and explicit CLI flags override file
+values. It is a display aid: the offline
+tool on a full CSV remains the reference for scoring, and thresholds are
+provisional until walk-through experiments set the operating range. As with
+all CSI work here, this visualizes signal variation; it does not classify
+presence or posture (see `docs/csi-human-sensing.md`.

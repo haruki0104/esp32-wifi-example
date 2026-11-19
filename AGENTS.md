@@ -21,3 +21,13 @@ From the repo root:
 - This application stays on the board. Espressif `esp-csi` examples are reference only (`docs/esp-csi-firmware.md`). This firmware does not classify presence or posture (`docs/csi-human-sensing.md`).
 
 Ignored, and not for commits: `.pio/`, `.vscode/` (generated; change `platformio.ini` instead), `captures/`, `include/secrets.h`.
+
+## Parallel agents
+
+- One agent per git worktree; never two agents in the same working tree.
+- Claim files before editing: comment on the relevant PR (or open one).
+  If another agent is mid-edit on a file, hold until its change lands.
+- One author implements, the other reviews; do not open a parallel branch
+  editing the same files without agreeing first on the PR thread.
+- Do not rewrite another agent's pushed branch. Land PRs into `dev` in
+  dependency order.

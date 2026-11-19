@@ -7,8 +7,14 @@ in real time:
   1. per-frame spectrum line: x = subcarrier index, y = amplitude
      (amplitude = sqrt(real^2 + imag^2), payload order is imag byte then
      real byte, signed int8; first 4 bytes skipped when first_word_invalid)
-  2. scrolling waterfall: x = subcarrier index, y = recent frame sequence,
-     color = amplitude
+     The top line always shows the raw latest spectrum.
+  2. scrolling waterfall: x = subcarrier index, y = recent frame sequence.
+     By default color = amplitude with a per-frame auto scale (window min
+     to 99th percentile). Use --vmax for a fixed 0..vmax scale so temporal
+     changes stay visible instead of being renormalized away. Use --diff to
+     paint the deviation from the window baseline (mean of all but the
+     newest frame) with a diverging colormap; --vmax then means a fixed
+     symmetric +-vmax scale. The two flags are independent and compose.
 
 Network receive runs in a background thread with a bounded deque, so a slow
 GUI never blocks the UDP socket. Optional --output archives the same JSONL
@@ -16,6 +22,8 @@ records as tools/csi_udp_read.py while plotting.
 
 Examples:
   python3 tools/csi_live_plot.py --port 5005
+  python3 tools/csi_live_plot.py --port 5005 --vmax 40
+  python3 tools/csi_live_plot.py --port 5005 --diff --vmax 15
   python3 tools/csi_live_plot.py --port 5005 --window 200 --output captures/live.jsonl
   python3 tools/csi_live_plot.py --replay captures/csi-20261108T014649Z.jsonl
 """
@@ -29,6 +37,7 @@ import time
 from collections import deque
 from pathlib import Path
 
+from csi_detect import LiveDetector, resolve_params
 from csi_frame import amplitude_spectrum
 from csi_read import frame_to_record
 from csi_udp_read import parse_frame_datagram
@@ -97,6 +106,68 @@ class LiveState:
                     "last_seq": self.last_seq,
                 },
             )
+
+
+def waterfall_view(arr, vmax=None, diff_mode=False):
+    """Compute the waterfall display array and color limits.
+
+    arr: 2D (frames, subcarriers) float array, oldest row first.
+    Returns (display, lo, hi, diverging).
+    - Normal mode: display is the raw amplitudes; auto scale uses the
+      window min to 99th percentile, fixed scale uses (0, vmax).
+    - Diff mode: display is each row minus the baseline (per-subcarrier
+      mean of all rows but the newest); auto scale is symmetric (-m, m)
+      from the 99th percentile of |display|, fixed scale is (-vmax, vmax).
+    """
+    import numpy as np
+
+    arr = np.asarray(arr, dtype=float)
+    if arr.ndim != 2 or arr.shape[0] == 0 or arr.shape[1] == 0:
+        raise ValueError("waterfall needs a non-empty 2D array")
+    if vmax is not None and vmax <= 0:
+        raise ValueError("vmax must be positive")
+    if not diff_mode:
+        if vmax is None:
+            lo, hi = float(np.min(arr)), float(np.percentile(arr, 99))
+            if hi <= lo:
+                hi = lo + 1.0
+        else:
+            lo, hi = 0.0, float(vmax)
+        return arr, lo, hi, False
+    if arr.shape[0] >= 2:
+        baseline = np.mean(arr[:-1], axis=0)
+    else:
+        baseline = np.zeros(arr.shape[1])
+    display = arr - baseline
+    if vmax is None:
+        m = float(np.percentile(np.abs(display), 99))
+        if m <= 0:
+            m = 1.0
+        lo, hi = -m, m
+    else:
+        lo, hi = -float(vmax), float(vmax)
+    return display, lo, hi, True
+
+
+def new_spectra_since(spectra, frames_total, fed_total):
+    """Return (new_spec_list, fed_total) using a monotonic counter.
+
+    snapshot() only holds the rolling window, so window length cannot tell
+    new frames from old once the deque is full; the cumulative pushed
+    count can.
+    """
+    new_count = max(0, int(frames_total) - int(fed_total))
+    return spectra[max(0, len(spectra) - new_count):], int(frames_total)
+
+
+def rolling_xlim(t_last, span_s):
+    """Fixed-width x window ending at t_last (scrolls once filled)."""
+    span = float(span_s)
+    if span <= 0:
+        raise ValueError("span must be positive")
+    if t_last <= span:
+        return (0.0, span)
+    return (float(t_last) - span, float(t_last))
 
 
 def udp_worker(state, listen, port, chip, stop_event, output_file=None):
@@ -196,18 +267,32 @@ def replay_worker(state, path, rate_hz, loop, stop_event):
             break
 
 
-def run_plot(state, window, interval_ms, chip_info=""):
+def run_plot(state, window, interval_ms, chip_info="", vmax=None,
+             diff_mode=False, detect_mode=False, detect_params=None,
+             z_span=60.0):
+    import time as _time
+
     import matplotlib
 
     # Defer backend choice to the environment (PyQt5 if available).
     import matplotlib.pyplot as plt
     import numpy as np
+    from collections import deque
     from matplotlib.animation import FuncAnimation
 
-    fig, (ax_spec, ax_water) = plt.subplots(
-        2, 1, figsize=(10, 7), gridspec_kw={"height_ratios": [1, 1.4]}
-    )
-    fig.suptitle("CSI live waveform (amplitude)")
+    if detect_mode:
+        fig, (ax_spec, ax_water, ax_z) = plt.subplots(
+            3, 1, figsize=(10, 9),
+            gridspec_kw={"height_ratios": [1, 1.4, 0.7]})
+        title = "CSI live waveform (amplitude + live detection)"
+    else:
+        fig, (ax_spec, ax_water) = plt.subplots(
+            2, 1, figsize=(10, 7), gridspec_kw={"height_ratios": [1, 1.4]}
+        )
+        title = "CSI live waveform (amplitude)"
+    if diff_mode:
+        title += " (Δ vs window baseline)"
+    fig.suptitle(title)
     (line,) = ax_spec.plot([], [], lw=1.2)
     ax_spec.set_xlabel("subcarrier index")
     ax_spec.set_ylabel("amplitude")
@@ -218,31 +303,80 @@ def run_plot(state, window, interval_ms, chip_info=""):
         bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.6),
     )
     water_img = ax_water.imshow(
-        np.zeros((1, 1)), aspect="auto", origin="lower", interpolation="nearest"
+        np.zeros((1, 1)), aspect="auto", origin="lower", interpolation="nearest",
+        cmap="RdBu_r" if diff_mode else "viridis",
     )
     ax_water.set_xlabel("subcarrier index")
     ax_water.set_ylabel(f"recent frames (window={window})")
-    fig.colorbar(water_img, ax=ax_water, label="amplitude")
+    fig.colorbar(water_img, ax=ax_water,
+                 label="\u0394 amplitude vs baseline" if diff_mode else "amplitude")
+    live_keys = ("base_s", "short_s", "z_enter", "z_exit",
+                 "min_dur_s", "warmup_s")
+    detector = (LiveDetector(**{k: detect_params[k] for k in live_keys})
+                if detect_mode and detect_params else None)
+    z_hist = deque(maxlen=600)
+    t_hist = deque(maxlen=600)
+    fed_total = 0
+    det_state = {"live": False}
+    if detect_mode:
+        (zline,) = ax_z.plot([], [], lw=1.0, color="tab:red")
+        ax_z.axhline(detector.z_enter, color="r", ls="--", lw=1,
+                    label="enter")
+        ax_z.axhline(detector.z_exit, color="r", ls=":", lw=1, label="exit")
+        ax_z.legend(fontsize=8, loc="upper right")
+        ax_z.set_ylabel("z")
+        ax_z.set_xlabel("seconds")
+        ax_z.grid(True, alpha=0.3)
+        banner = ax_z.text(0.01, 0.90, "quiet", transform=ax_z.transAxes,
+                           va="top", ha="left", fontsize=11,
+                           fontweight="bold",
+                           bbox=dict(boxstyle="round", facecolor="lightgreen",
+                                     alpha=0.7))
     fig.tight_layout()
 
     def update(_frame_no):
+        nonlocal fed_total
+        artists = [line, water_img, status_text]
         spectra, meta, stats = state.snapshot()
         if not spectra:
-            return line, water_img, status_text
+            return artists
+        if detect_mode:
+            tick = _time.monotonic()
+            fresh, fed_total = new_spectra_since(
+                spectra, stats["frames"], fed_total)
+            for spec in fresh:
+                _, live = detector.update(spec, tick)
+                det_state["live"] = live
+            z_hist.append(detector.z)
+            t_hist.append(tick)
+            t0 = t_hist[0]
+            zline.set_data([t - t0 for t in t_hist], list(z_hist))
+            ax_z.relim()
+            ax_z.autoscale_view()
+            ax_z.set_xlim(*rolling_xlim(tick - t_hist[0], z_span))
+            banner.set_text("ACTIVE" if det_state["live"] else "quiet")
+            banner.set_bbox(dict(boxstyle="round",
+                                 facecolor="tomato" if det_state["live"]
+                                 else "lightgreen", alpha=0.7))
+            artists = artists + [zline, banner]
         latest = spectra[-1]
         xs = list(range(len(latest)))
         line.set_data(xs, latest)
         ax_spec.relim()
         ax_spec.autoscale_view()
         arr = np.array(spectra, dtype=float)
-        water_img.set_data(arr)
-        # Keep color scale stable-ish but adaptive: 1st/99th percentile.
-        lo, hi = float(np.min(arr)), float(np.percentile(arr, 99))
-        if hi <= lo:
-            hi = lo + 1.0
+        display, lo, hi = waterfall_view(arr, vmax=vmax, diff_mode=diff_mode)[:3]
+        water_img.set_data(display)
         water_img.set_clim(lo, hi)
         ax_water.set_ylim(-0.5, max(len(spectra) - 0.5, 0.5))
         ax_water.set_xlim(-0.5, len(latest) - 0.5)
+        if vmax is None:
+            scale_info = "scale=\u00b1auto" if diff_mode else "scale=auto"
+        else:
+            scale_info = (f"scale=\u00b1{vmax:g} fixed"
+                          if diff_mode else f"scale=0-{vmax:g} fixed")
+        if diff_mode:
+            scale_info += " \u0394baseline"
         status_text.set_text(
             f"seq={meta.get('sequence', '?')}  "
             f"rssi={meta.get('rssi_dbm', '?')}dBm  "
@@ -250,9 +384,12 @@ def run_plot(state, window, interval_ms, chip_info=""):
             f"mac={meta.get('source_mac', '?')}{chip_info}\n"
             f"fps={stats['fps']:.1f}  frames={stats['frames']}  "
             f"gaps={stats['gaps']}  fw_drops={stats['fw_drops']}  "
-            f"malformed={stats['malformed']}"
+            f"malformed={stats['malformed']}  {scale_info}"
         )
-        return line, water_img, status_text
+        if detect_mode:
+            status_text.set_text(status_text.get_text() +
+                ("  DET:ACTIVE" if det_state["live"] else "  det:quiet"))
+        return artists
 
     anim = FuncAnimation(fig, update, interval=interval_ms, blit=False, cache_frame_data=False)
     # Keep a reference so the animation is not garbage-collected.
@@ -268,6 +405,23 @@ def main(argv=None):
     parser.add_argument("--chip", type=int, default=1)
     parser.add_argument("--window", type=int, default=100,
                         help="waterfall depth in frames (default: 100)")
+    parser.add_argument("--vmax", type=float, default=None,
+                        help="fixed waterfall color scale: 0..vmax, or +-vmax "
+                             "with --diff (default: per-frame auto scale)")
+    parser.add_argument("--detect", action="store_true",
+                        help="third panel: live adaptive detection "
+                             "z-score with ACTIVE banner (baseline is "
+                             "the rolling window; use --window 300+ "
+                             "for a slower baseline)")
+    parser.add_argument("--detect-config", type=Path, default=None,
+                        help="JSON threshold file for --detect (default: "
+                             "shipped tools/csi_detect.json when present)")
+    parser.add_argument("--zspan", type=float, default=60.0,
+                        help="live z panel shows the last N seconds "
+                             "(rolling window, default: 60)")
+    parser.add_argument("--diff", action="store_true",
+                        help="waterfall shows deviation from the window "
+                             "baseline instead of raw amplitude")
     parser.add_argument("--interval", type=int, default=100,
                         help="GUI refresh interval in ms (default: 100)")
     parser.add_argument("--replay", type=Path, default=None,
@@ -284,6 +438,17 @@ def main(argv=None):
         parser.error("--port must be between 1 and 65535")
     if args.window < 2:
         parser.error("--window must be >= 2")
+    if args.vmax is not None and args.vmax <= 0:
+        parser.error("--vmax must be positive")
+    if args.zspan <= 0:
+        parser.error("--zspan must be positive")
+    detect_params = None
+    if args.detect:
+        try:
+            detect_params = resolve_params({}, args.detect_config)
+        except ValueError as error:
+            parser.error(str(error))
+        print(f"Live detection thresholds: {detect_params}")
 
     state = LiveState(window=args.window)
     stop_event = threading.Event()
@@ -308,7 +473,9 @@ def main(argv=None):
         )
     worker.start()
     try:
-        run_plot(state, args.window, args.interval, chip_info=f"  chip={args.chip}")
+        run_plot(state, args.window, args.interval, chip_info=f"  chip={args.chip}",
+                 vmax=args.vmax, diff_mode=args.diff, detect_mode=args.detect,
+                 detect_params=detect_params, z_span=args.zspan)
     except KeyboardInterrupt:
         print("\nStopped by user.")
     finally:
