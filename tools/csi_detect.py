@@ -25,6 +25,7 @@ Thresholds live in tools/csi_detect.json (versioned, hand-tunable);
 
 import argparse
 import sys
+from bisect import bisect_left
 from collections import deque
 from pathlib import Path
 
@@ -95,29 +96,24 @@ def resolve_params(cli_values, config_path=None):
     return params
 
 
-def trailing_median_mad(matrix, times, window_s, min_frames=5):
-    """Per-carrier trailing median and MAD for every frame.
+def trailing_median(matrix, times, window_s):
+    """Per-carrier trailing median for every frame.
 
     Row i uses matrix[max(0, t_i - window_s) : i] (strictly past frames);
-    early rows fall back to whatever history exists.
+    early rows fall back to whatever history exists. Window bounds come
+    from bisect because the timestamps are monotonic, which keeps the
+    per-row search out of Python.
     """
     import numpy as np
 
     n = matrix.shape[0]
+    stamps = [float(t) for t in times]
     meds = np.empty_like(matrix)
-    mads = np.empty_like(matrix)
     for i in range(n):
-        lo = 0
-        cutoff = times[i] - window_s
-        while lo < i and times[lo] < cutoff:
-            lo += 1
+        lo = bisect_left(stamps, stamps[i] - window_s, 0, i)
         win = matrix[lo:i] if i - lo >= 1 else matrix[max(0, i - 1):i + 1]
-        if win.shape[0] < 1:
-            win = matrix[i:i + 1]
-        med = np.median(win, axis=0)
-        meds[i] = med
-        mads[i] = np.median(np.abs(win - med), axis=0)
-    return meds, mads
+        meds[i] = np.median(win, axis=0)
+    return meds
 
 
 def trailing_stat(values, times, window_s, fn):
@@ -125,27 +121,18 @@ def trailing_stat(values, times, window_s, fn):
     import numpy as np
 
     values = np.asarray(values, dtype=float)
+    stamps = [float(t) for t in times]
     out = np.empty_like(values)
     for i in range(len(values)):
-        lo = 0
-        cutoff = times[i] - window_s
-        while lo <= i and times[lo] < cutoff:
-            lo += 1
+        lo = bisect_left(stamps, stamps[i] - window_s, 0, i + 1)
         out[i] = float(fn(values[lo:i + 1]))
     return out
-
-
-def trailing_smooth(values, times, window_s):
-    """Trailing mean of a 1-D series over window_s seconds."""
-    import numpy as np
-
-    return trailing_stat(values, times, window_s, np.mean)
 
 
 def detect(matrix, times, base_s=60.0, short_s=3.0,
            z_enter=3.0, z_exit=1.5, min_dur_s=2.0,
            merge_gap_s=2.0, warmup_s=5.0):
-    """Return (segments, score, z, info). Segments are (start, end) seconds.
+    """Return (segments, z, info). Segments are (start, end) seconds.
 
     Detections starting before warmup_s are dropped: with almost no
     trailing history the carrier baselines are noisy and the first seconds
@@ -154,7 +141,7 @@ def detect(matrix, times, base_s=60.0, short_s=3.0,
     import numpy as np
 
     times = np.asarray(times, dtype=float)
-    meds, _ = trailing_median_mad(matrix, times, base_s)
+    meds = trailing_median(matrix, times, base_s)
     energy = np.mean(np.abs(matrix - meds), axis=1)
     # Median (not mean): single-frame environmental spikes must not move
     # the short window, or they dominate the scale and mask real bouts.

@@ -13,7 +13,7 @@ except ImportError as error:
 
 from csi_detect import (DETECT_DEFAULTS, LiveDetector, default_config_path,
                          detect, load_config_file, resolve_params,
-                         score_against_marks, trailing_stat)
+                         score_against_marks, trailing_median, trailing_stat)
 
 
 def synthetic(n=300, fps=10.0, carriers=8, burst_at=(10.0, 20.0),
@@ -35,6 +35,30 @@ class TrailingStatTests(unittest.TestCase):
         # t=3 window covers [1.5, 3] -> mean(3, 4).
         self.assertAlmostEqual(out[3], 3.5)
         self.assertAlmostEqual(out[0], 1.0)
+
+
+class TrailingMedianTests(unittest.TestCase):
+    def test_matches_bruteforce_per_carrier(self):
+        # bisect-based bounds must agree with the naive scan, including the
+        # one-past-row fallback at the start of a capture.
+        rng = np.random.default_rng(3)
+        matrix = rng.normal(15.0, 2.0, size=(40, 3))
+        times = np.cumsum(rng.uniform(0.05, 0.25, size=40))
+        got = trailing_median(matrix, times, 1.0)
+        self.assertEqual(got.shape, matrix.shape)
+        for i in range(len(times)):
+            lo = 0
+            while lo < i and times[lo] < times[i] - 1.0:
+                lo += 1
+            win = matrix[lo:i] if i - lo >= 1 else matrix[max(0, i - 1):i + 1]
+            np.testing.assert_allclose(got[i], np.median(win, axis=0))
+
+    def test_gap_drops_stale_frames(self):
+        # Frame index is not time: a long silence must leave the window.
+        matrix = np.array([[0.0], [0.0], [0.0], [10.0], [10.0]])
+        times = np.array([0.0, 0.1, 0.2, 5.0, 5.1])
+        got = trailing_median(matrix, times, 1.0)
+        self.assertEqual(got[4][0], 10.0)
 
 
 class DetectTests(unittest.TestCase):
