@@ -94,6 +94,17 @@ class PlotCsvTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_matrix(path)
 
+    def test_time_edges_follow_timestamps(self):
+        from csi_plot_csv import time_edges
+        self.assertEqual(time_edges([1.0]), [0.95, 1.05])
+        edges = time_edges([0.0, 0.1, 0.3])  # gap before last row
+        self.assertEqual(len(edges), 4)
+        self.assertAlmostEqual(edges[0], -0.05)
+        self.assertAlmostEqual(edges[2], 0.2)  # midpoint, not 0.15
+        self.assertAlmostEqual(edges[3], 0.4)
+        with self.assertRaises(ValueError):
+            time_edges([])
+
     def test_heatmap_modes_write_png(self):
         with TemporaryDirectory() as tmp:
             path = str(Path(tmp) / "amp.csv")

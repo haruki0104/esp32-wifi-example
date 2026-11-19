@@ -155,6 +155,27 @@ def load_matrix(path):
     return series, matrix, sc_cols
 
 
+def time_edges(ts):
+    """Cell edges for pcolormesh from per-row timestamps (seconds).
+
+    Rows are NOT assumed evenly spaced: UDP gaps would otherwise skew the
+    axis (frame index != time).
+    """
+    import numpy as np
+
+    ts = [float(t) for t in ts]
+    if not ts:
+        raise ValueError("need at least one timestamp")
+    if len(ts) == 1:
+        half = 0.05
+        return [ts[0] - half, ts[0] + half]
+    edges = [ts[0] - (ts[1] - ts[0]) / 2.0]
+    for i in range(1, len(ts)):
+        edges.append((ts[i - 1] + ts[i]) / 2.0)
+    edges.append(ts[-1] + (ts[-1] - ts[-2]) / 2.0)
+    return edges
+
+
 def parse_marks(spec):
     """Parse 'label:start-end,label:start-end' posture segments (seconds)."""
     marks = []
@@ -203,11 +224,11 @@ def plot_heatmap(series, matrix, sc_cols, title, out_path,
                 hi = lo + 1.0
         else:
             lo, hi = 0.0, vmax
-    t_end = series["ts"][-1] if series["ts"] else 1.0
+    x_edges = time_edges(series["ts"]) if series["ts"] else [0.0, 1.0]
+    y_edges = [float(i) - 0.5 for i in range(len(sc_cols) + 1)]
     fig, ax = plt.subplots(figsize=(11, 5.5))
-    img = ax.imshow(view.T, aspect="auto", origin="lower",
-                    interpolation="nearest", cmap=cmap,
-                    extent=[0, t_end, -0.5, len(sc_cols) - 0.5])
+    img = ax.pcolormesh(x_edges, y_edges, view.T, cmap=cmap,
+                        shading="flat")
     img.set_clim(lo, hi)
     palette = ["#ffd54f", "#80deea", "#c5e1a5", "#ce93d8", "#ffab91"]
     for i, (label, start, end) in enumerate(marks):
