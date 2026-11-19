@@ -149,6 +149,17 @@ def waterfall_view(arr, vmax=None, diff_mode=False):
     return display, lo, hi, True
 
 
+def new_spectra_since(spectra, frames_total, fed_total):
+    """Return (new_spec_list, fed_total) using a monotonic counter.
+
+    snapshot() only holds the rolling window, so window length cannot tell
+    new frames from old once the deque is full; the cumulative pushed
+    count can.
+    """
+    new_count = max(0, int(frames_total) - int(fed_total))
+    return spectra[max(0, len(spectra) - new_count):], int(frames_total)
+
+
 def rolling_xlim(t_last, span_s):
     """Fixed-width x window ending at t_last (scrolls once filled)."""
     span = float(span_s)
@@ -305,12 +316,14 @@ def run_plot(state, window, interval_ms, chip_info="", vmax=None,
                 if detect_mode and detect_params else None)
     z_hist = deque(maxlen=600)
     t_hist = deque(maxlen=600)
-    fed = 0
+    fed_total = 0
     det_state = {"live": False}
     if detect_mode:
         (zline,) = ax_z.plot([], [], lw=1.0, color="tab:red")
-        ax_z.axhline(3.0, color="r", ls="--", lw=1)
-        ax_z.axhline(1.5, color="r", ls=":", lw=1)
+        ax_z.axhline(detector.z_enter, color="r", ls="--", lw=1,
+                    label="enter")
+        ax_z.axhline(detector.z_exit, color="r", ls=":", lw=1, label="exit")
+        ax_z.legend(fontsize=8, loc="upper right")
         ax_z.set_ylabel("z")
         ax_z.set_xlabel("seconds")
         ax_z.grid(True, alpha=0.3)
@@ -322,17 +335,18 @@ def run_plot(state, window, interval_ms, chip_info="", vmax=None,
     fig.tight_layout()
 
     def update(_frame_no):
-        nonlocal fed
+        nonlocal fed_total
         artists = [line, water_img, status_text]
         spectra, meta, stats = state.snapshot()
         if not spectra:
             return artists
         if detect_mode:
             tick = _time.monotonic()
-            for spec in spectra[fed:]:
+            fresh, fed_total = new_spectra_since(
+                spectra, stats["frames"], fed_total)
+            for spec in fresh:
                 _, live = detector.update(spec, tick)
                 det_state["live"] = live
-            fed = len(spectra)
             z_hist.append(detector.z)
             t_hist.append(tick)
             t0 = t_hist[0]

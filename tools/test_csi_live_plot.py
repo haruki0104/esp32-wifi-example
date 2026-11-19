@@ -49,6 +49,17 @@ class WaterfallViewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             rolling_xlim(10.0, 0.0)
 
+    def test_new_spectra_since_survives_window_overflow(self):
+        from csi_live_plot import new_spectra_since
+        # Window holds 3, 5 frames pushed total, 2 already fed.
+        fresh, fed = new_spectra_since([3, 4, 5], 5, 2)
+        self.assertEqual(list(fresh), [3, 4, 5])
+        self.assertEqual(fed, 5)
+        # Nothing new on the next tick.
+        fresh, fed = new_spectra_since([3, 4, 5], 5, 5)
+        self.assertEqual(list(fresh), [])
+        self.assertEqual(fed, 5)
+
     def test_rejects_bad_input(self):
         with self.assertRaises(ValueError):
             waterfall_view([])
