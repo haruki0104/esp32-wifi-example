@@ -178,13 +178,13 @@ def udp_worker(state, listen, port, chip, stop_event, output_file=None):
         out_handle = output_file.open("a", encoding="utf-8")
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            from csi_read import HEADER, MAX_LEN
+            from csi_read import MAX_FRAME_SIZE
 
             sock.bind((listen, port))
             sock.settimeout(0.25)
             while not stop_event.is_set():
                 try:
-                    datagram, addr = sock.recvfrom(HEADER.size + MAX_LEN + 1)
+                    datagram, addr = sock.recvfrom(MAX_FRAME_SIZE + 1)
                 except socket.timeout:
                     continue
                 try:

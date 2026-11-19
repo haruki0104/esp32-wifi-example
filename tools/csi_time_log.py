@@ -143,7 +143,7 @@ def default_output_path():
 def run_udp(recorder, sink, listen, port, chip, count, timeout,
             progress_every=50):
     """Receive live datagrams; returns (frames, malformed)."""
-    from csi_read import HEADER, MAX_LEN
+    from csi_read import MAX_FRAME_SIZE
 
     frames = 0
     malformed = 0
@@ -157,7 +157,7 @@ def run_udp(recorder, sink, listen, port, chip, count, timeout,
             if deadline is not None and time.monotonic() >= deadline:
                 break
             try:
-                datagram, addr = sock.recvfrom(HEADER.size + MAX_LEN + 1)
+                datagram, addr = sock.recvfrom(MAX_FRAME_SIZE + 1)
             except socket.timeout:
                 continue
             try:

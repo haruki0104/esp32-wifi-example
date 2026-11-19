@@ -1,7 +1,18 @@
 import struct
 import unittest
 
-from csi_read import CsiFrameParser, HEADER, frame_to_record
+from csi_read import (
+    CsiFrameParser,
+    FLAG_BANDWIDTH_40MHZ,
+    FLAG_FIRST_WORD_INVALID,
+    FLAG_ROLE_TX,
+    HEADER,
+    HEADER_V2,
+    MAGIC,
+    MAX_FRAME_SIZE,
+    frame_to_record,
+    parse_frame,
+)
 from csi_udp_read import parse_frame_datagram
 
 
@@ -102,6 +113,105 @@ class CsiFrameParserTests(unittest.TestCase):
     def test_udp_parser_rejects_unexpected_chip(self):
         with self.assertRaisesRegex(ValueError, "unexpected chip ID"):
             parse_frame_datagram(make_frame(chip=2))
+
+
+def make_frame_v2(
+    payload=b"\x01\xff\x7f",
+    sequence=9,
+    node_id=2,
+    rx_ts_us=1_700_000_000_123_456,
+    first_word_invalid=True,
+    bandwidth_40=False,
+    role_tx=False,
+    drops=4,
+):
+    flags = 0
+    if first_word_invalid:
+        flags |= FLAG_FIRST_WORD_INVALID
+    if bandwidth_40:
+        flags |= FLAG_BANDWIDTH_40MHZ
+    if role_tx:
+        flags |= FLAG_ROLE_TX
+    header = HEADER_V2.pack(
+        MAGIC,
+        2,
+        1,
+        len(payload),
+        sequence,
+        rx_ts_us,
+        node_id,
+        flags,
+        -38,
+        10,
+        drops,
+        bytes.fromhex("30169d5fedd0"),
+    )
+    return header + payload
+
+
+class MultiNodeFrameTests(unittest.TestCase):
+    def test_v2_frame_round_trips_node_identity_and_time(self):
+        frame = parse_frame(make_frame_v2())
+
+        self.assertEqual(frame.version, 2)
+        self.assertEqual(frame.node_id, 2)
+        self.assertEqual(frame.rx_ts_us, 1_700_000_000_123_456)
+        self.assertTrue(frame.first_word_invalid)
+        self.assertEqual(frame.bandwidth_mhz, 20)
+        self.assertEqual(frame.role, "rx")
+        self.assertEqual(frame.drops, 4)
+
+    def test_v2_flags_decode_bandwidth_and_role(self):
+        frame = parse_frame(make_frame_v2(bandwidth_40=True, role_tx=True))
+
+        self.assertEqual(frame.bandwidth_mhz, 40)
+        self.assertEqual(frame.role, "tx")
+
+    def test_v1_frames_still_parse_with_unset_v2_fields(self):
+        frame = parse_frame(make_frame())
+
+        self.assertEqual(frame.version, 1)
+        self.assertEqual(frame.node_id, 0)
+        self.assertIsNone(frame.rx_ts_us)
+        self.assertEqual(frame.bandwidth_mhz, 20)
+        self.assertEqual(frame.role, "rx")
+
+    def test_v2_rejects_unset_node_id(self):
+        with self.assertRaisesRegex(ValueError, "node_id"):
+            parse_frame(make_frame_v2(node_id=0))
+
+    def test_stream_parser_over_v2_frames(self):
+        parser = CsiFrameParser()
+        wire = make_frame_v2(sequence=1) + make_frame_v2(sequence=2)
+
+        frames = parser.feed(wire)
+
+        self.assertEqual([frame.sequence for frame in frames], [1, 2])
+        self.assertTrue(all(frame.node_id == 2 for frame in frames))
+
+    def test_mixed_v1_and_v2_stream(self):
+        parser = CsiFrameParser()
+        wire = make_frame(sequence=1) + make_frame_v2(sequence=2)
+
+        frames = parser.feed(wire)
+
+        self.assertEqual([frame.version for frame in frames], [1, 2])
+        self.assertEqual([frame.sequence for frame in frames], [1, 2])
+
+    def test_max_payload_v2_fits_the_receive_buffer(self):
+        wire = make_frame_v2(payload=b"\x00" * 512)
+
+        self.assertEqual(len(wire), MAX_FRAME_SIZE)
+        self.assertEqual(parse_frame(wire).payload, b"\x00" * 512)
+
+    def test_record_carries_v2_fields(self):
+        record = frame_to_record(parse_frame(make_frame_v2()))
+
+        self.assertEqual(record["frame_version"], 2)
+        self.assertEqual(record["node_id"], 2)
+        self.assertEqual(record["rx_ts_us"], 1_700_000_000_123_456)
+        self.assertEqual(record["bandwidth_mhz"], 20)
+        self.assertEqual(record["node_role"], "rx")
 
 
 if __name__ == "__main__":
