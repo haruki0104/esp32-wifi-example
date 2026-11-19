@@ -3,6 +3,15 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+try:
+    import matplotlib  # noqa: F401  (the render tests save PNGs)
+    import numpy  # noqa: F401
+except ImportError as error:
+    raise unittest.SkipTest(
+        f"host plot deps missing ({error.name}); "
+        "install tools/requirements-plot.txt"
+    ) from error
+
 from csi_plot_csv import (default_output, load_matrix, load_series, parse_marks,
                            plot_compare, plot_heatmap, plot_single, series_stats)
 
