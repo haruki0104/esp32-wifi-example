@@ -202,4 +202,4 @@ values. It is a display aid: the offline
 tool on a full CSV remains the reference for scoring, and thresholds are
 provisional until walk-through experiments set the operating range. As with
 all CSI work here, this visualizes signal variation; it does not classify
-presence or posture (see `docs/csi-human-sensing.md`.
+presence or posture (see `docs/csi-human-sensing.md`).
