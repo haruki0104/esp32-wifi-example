@@ -73,28 +73,46 @@ incremental detector, offline detector with `--mark` scoring. Thresholds in
 - The AP uplink is not used for CSI. Keeping the AP out of the measurement
   removes the traffic-dependent sampling that exists today.
 
-### Frame v2 (D1, D3)
+### Frame v2 (D1, D3) — layout frozen 2026-11-19
 
-Version bump, keep v1 readable for archived captures:
+Version bump; v1 stays readable for archived captures. 32 bytes, packed,
+little-endian.
 
-| Field | Bytes | Notes |
-|---|---|---|
-| magic `CSI1` | 4 | unchanged |
-| version | 1 | `2` |
-| chip | 1 | unchanged |
-| len | 2 | unchanged |
-| node_id | 1 | RX node identity, assigned per board |
-| flags | 1 | first-word-invalid, bandwidth, TX/RX role |
-| seq | 4 | per node, wraps |
-| tx_ts_us | 8 | `esp_timer_get_time()` at RX capture, monotonic |
-| rssi | 1 | unchanged |
-| channel | 1 | unchanged |
-| drops | 2 | unchanged |
-| mac[6] | 6 | TX (peer) MAC |
+| Offset | Field | Bytes | Notes |
+|---|---|---|---|
+| 0 | magic `CSI1` | 4 | unchanged |
+| 4 | version | 1 | `2` |
+| 5 | chip | 1 | `1` = ESP32 |
+| 6 | len | 2 | payload bytes, at most 512 |
+| 8 | seq | 4 | per node, wraps |
+| 12 | `rx_ts_us` | 8 | `esp_timer_get_time()` taken **on the RX node** at CSI capture, microseconds, monotonic |
+| 20 | `node_id` | 1 | RX board identity, see below |
+| 21 | `flags` | 1 | see below |
+| 22 | rssi | 1 | dBm |
+| 23 | channel | 1 | primary channel |
+| 24 | drops | 2 | samples dropped since previous emitted frame |
+| 26 | mac[6] | 6 | **TX (peer)** MAC, the node whose packet produced this CSI |
 
-`node_id` and `tx_ts_us` are the two fields that unlock everything else. The
-header grows past 24 bytes, so `src/csi/CsiCollector.cpp`, `tools/csi_read.py`
-and `tools/csi_udp_read.py` must move in lockstep (see AGENTS.md).
+`flags` bit allocation (frozen; bits 4-7 must be written 0 and ignored on read):
+
+| Bit(s) | Meaning |
+|---|---|
+| 0 | `first_word_invalid` — first four payload bytes invalid |
+| 1-2 | bandwidth: `0` = 20 MHz, `1` = 40 MHz, `2-3` reserved |
+| 3 | role: `0` = RX node, `1` = TX node |
+| 4-7 | reserved, zero |
+
+`node_id` comes from a per-board build flag, not from runtime config:
+`-D CSI_NODE_ID=<n>` in that board's `platformio.ini` env. Range `1..254`
+assigned per board; `0` means unset and the host must reject the frame with a
+warning; `255` is reserved for the TX node. `node_id` identifies the receiver;
+the transmitter is identified by `mac[6]`.
+
+`rx_ts_us` and `node_id` are the two fields that unlock everything else. The
+header grows from 24 to 32 bytes, so `src/csi/CsiCollector.cpp`,
+`tools/csi_read.py` and `tools/csi_udp_read.py` must move in lockstep
+(see AGENTS.md), and the host parser keeps a v1 path for existing captures.
+
 
 ### Transport and aggregation
 
@@ -147,6 +165,14 @@ must be measured before committing to any figure.
 | M2 | 4-class posture | Confusion matrix on a held-out session; N=1 vs N=2 ablation |
 | M3 | Respiration | Out of scope until M2 holds |
 
+**M0 abort condition (frozen).** If a five-minute run with the TX broadcasting
+at the target interval yields zero CSI frames attributed to the TX MAC on any
+RX, or sustains under 5 frames/s per RX, M0 is aborted rather than tuned: the
+broadcast path does not produce CSI on this hardware/driver combination, and
+the topology is revisited (unicast to each RX, or RX-initiated traffic) before
+any further work. This is a stop rule, not a target to iterate past.
+
+
 ## Non-goals (explicit)
 
 - **Heartbeat.** Sub-centimetre chest displacement needs phase sanitisation,
@@ -167,6 +193,16 @@ must be measured before committing to any figure.
 - **Label timing.** With D3, a late metronome segment is a wrong label, not noise.
 - **Overfitting.** Small scripted datasets plus session-level splits: report
   held-out results only.
+
+## Work split (M0, agreed 2026-11-19)
+
+| Owner | Scope | Branch |
+|---|---|---|
+| pi | frame v2 header, TX softAP/broadcast mode, RX filtering to the TX MAC, `-D CSI_NODE_ID` wiring, `include/secrets.example.h` | `feat/csi-v2-tx-rx` |
+| Hermes | host v2 parser (v1 still readable), aggregator (merge, clock fit, resample, merged CSV), M0 run analysis | `feat/csi-aggregator` |
+
+Both branch from `dev` and PR into `dev`. The frame layout above is frozen as
+of 2026-11-19; changes to it require a comment on both PRs.
 
 ## Next actions
 
