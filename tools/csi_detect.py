@@ -96,21 +96,42 @@ def resolve_params(cli_values, config_path=None):
     return params
 
 
+def _timestamps(times):
+    """Float copy of the timeline, validated as non-decreasing.
+
+    The window bounds below come from bisect, which needs an ordered
+    sequence: an unordered timeline would silently return a wrong start
+    row, so reject it here instead of drifting from the scan-based numbers.
+    """
+    stamps = [float(t) for t in times]
+    if any(later < earlier for earlier, later in zip(stamps, stamps[1:])):
+        raise ValueError(
+            "times must be non-decreasing; bisect-based trailing windows "
+            "cannot search an unordered timeline"
+        )
+    return stamps
+
+
+def _window_start(stamps, i, window_s, include_current):
+    """First row inside [t_i - window_s, t_i] (or [.., t_i) when exclusive)."""
+    hi = i + 1 if include_current else i
+    return bisect_left(stamps, stamps[i] - window_s, 0, hi)
+
+
 def trailing_median(matrix, times, window_s):
     """Per-carrier trailing median for every frame.
 
     Row i uses matrix[max(0, t_i - window_s) : i] (strictly past frames);
-    early rows fall back to whatever history exists. Window bounds come
-    from bisect because the timestamps are monotonic, which keeps the
-    per-row search out of Python.
+    early rows fall back to whatever history exists. The window start is a
+    C-level binary search over the validated timeline, not a Python scan.
     """
     import numpy as np
 
     n = matrix.shape[0]
-    stamps = [float(t) for t in times]
+    stamps = _timestamps(times)
     meds = np.empty_like(matrix)
     for i in range(n):
-        lo = bisect_left(stamps, stamps[i] - window_s, 0, i)
+        lo = _window_start(stamps, i, window_s, include_current=False)
         win = matrix[lo:i] if i - lo >= 1 else matrix[max(0, i - 1):i + 1]
         meds[i] = np.median(win, axis=0)
     return meds
@@ -121,10 +142,10 @@ def trailing_stat(values, times, window_s, fn):
     import numpy as np
 
     values = np.asarray(values, dtype=float)
-    stamps = [float(t) for t in times]
+    stamps = _timestamps(times)
     out = np.empty_like(values)
     for i in range(len(values)):
-        lo = bisect_left(stamps, stamps[i] - window_s, 0, i + 1)
+        lo = _window_start(stamps, i, window_s, include_current=True)
         out[i] = float(fn(values[lo:i + 1]))
     return out
 

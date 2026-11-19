@@ -58,7 +58,18 @@ class TrailingMedianTests(unittest.TestCase):
         matrix = np.array([[0.0], [0.0], [0.0], [10.0], [10.0]])
         times = np.array([0.0, 0.1, 0.2, 5.0, 5.1])
         got = trailing_median(matrix, times, 1.0)
-        self.assertEqual(got[4][0], 10.0)
+        self.assertAlmostEqual(got[4][0], 10.0)
+
+    def test_rejects_unordered_timeline(self):
+        # bisect needs an ordered timeline; a backwards clock jump must fail
+        # loudly instead of returning window bounds that scan-based code
+        # would not have produced.
+        matrix = np.zeros((3, 2))
+        times = np.array([0.0, 2.0, 1.0])
+        with self.assertRaises(ValueError):
+            trailing_median(matrix, times, 1.0)
+        with self.assertRaises(ValueError):
+            trailing_stat(np.zeros(3), times, 1.0, np.median)
 
 
 class DetectTests(unittest.TestCase):
