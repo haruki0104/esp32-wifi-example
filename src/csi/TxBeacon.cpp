@@ -84,7 +84,8 @@ void TxBeacon::service() {
     header.rxTsUs = static_cast<uint64_t>(esp_timer_get_time());
     header.nodeId = csi::kNodeTx;
     header.flags = csi::kFlagRoleTx;
-    header.channel = CSI_TX_CHANNEL;
+    const uint8_t liveChannel = static_cast<uint8_t>(WiFi.channel());
+    header.channel = liveChannel != 0 ? liveChannel : CSI_TX_CHANNEL;
     uint8_t self[6] = {};
     if (esp_wifi_get_mac(WIFI_IF_AP, self) == ESP_OK) {
       memcpy(header.mac, self, sizeof(header.mac));

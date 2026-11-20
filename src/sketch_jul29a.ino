@@ -43,6 +43,9 @@ WifiCredential kWifiNetworks[] = {
 #endif
 };
 
+#if CSI_NODE_ID == 0
+#error CSI_NODE_ID is unset: set -D CSI_NODE_ID per board (255 TX, 1..254 RX)
+#endif
 #if CSI_NODE_ID == 255
 constexpr bool kIsTxNode = true;
 #else
@@ -50,6 +53,15 @@ constexpr bool kIsTxNode = false;
 #endif
 
 namespace {
+
+// RX nodes only measure the TX softAP link. Fallback networks below exist
+// for uplink/clock when no TX node is around; frames captured there must
+// never be forwarded as measurement data (wrong-link corruption).
+const char* activeSsid = nullptr;
+bool onMeasurementNetwork() {
+  return !kIsTxNode && activeSsid != nullptr &&
+         strcmp(activeSsid, CSI_TX_SSID) == 0;
+}
 
 constexpr uint32_t kWifiTimeoutMs = 15000;
 constexpr uint32_t kNtpTimeoutMs = 30000;
@@ -91,11 +103,13 @@ void formatCsiStatus(char* buffer, size_t size) {
 void connectAndStartClock() {
   csiCollector.stop();
   streamStarted = false;
+  activeSsid = nullptr;
   bool wifi_ok = false;
   for (const auto& net : kWifiNetworks) {
     display.showStatus("Connecting WiFi...", net.ssid);
     if (wifi.connect(net.ssid, net.password, kWifiTimeoutMs)) {
       wifi_ok = true;
+      activeSsid = net.ssid;
       break;
     }
     display.showStatus("WiFi connection", "failed", "Retrying...");
@@ -106,6 +120,13 @@ void connectAndStartClock() {
 
   display.showStatus("Syncing time...", "NTP");
   networkClock.begin();
+
+  if (!onMeasurementNetwork()) {
+    Serial.print("Joined uplink only (");
+    Serial.print(activeSsid);
+    Serial.println("): CSI capture disabled until TX network is up");
+    return;
+  }
 
   const uint32_t gatewayWaitStarted = millis();
   while (!csiCollector.isRunning() && millis() - gatewayWaitStarted < 2000) {
@@ -173,7 +194,8 @@ void loop() {
     return;
   }
 
-  if (!streamStarted && csiCollector.start(CSI_HOST_IP, CSI_UDP_PORT)) {
+  if (!streamStarted && onMeasurementNetwork() &&
+      csiCollector.start(CSI_HOST_IP, CSI_UDP_PORT)) {
     Serial.printf("CSI_UDP_START %s:%u\n", CSI_HOST_IP,
                   static_cast<unsigned>(CSI_UDP_PORT));
     streamStarted = true;
