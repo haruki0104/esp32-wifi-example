@@ -142,11 +142,12 @@ def default_output_path():
 
 def run_udp(recorder, sink, listen, port, chip, count, timeout,
             progress_every=50):
-    """Receive live datagrams; returns (frames, malformed)."""
-    from csi_read import HEADER, MAX_LEN
+    """Receive live datagrams; returns (frames, malformed, tx_ignored)."""
+    from csi_read import MAX_FRAME_SIZE
 
     frames = 0
     malformed = 0
+    tx_ignored = 0
     started_at = time.monotonic()
     deadline = started_at + timeout if timeout else None
     last_report = started_at
@@ -157,11 +158,21 @@ def run_udp(recorder, sink, listen, port, chip, count, timeout,
             if deadline is not None and time.monotonic() >= deadline:
                 break
             try:
-                datagram, addr = sock.recvfrom(HEADER.size + MAX_LEN + 1)
+                datagram, addr = sock.recvfrom(MAX_FRAME_SIZE + 1)
             except socket.timeout:
                 continue
             try:
                 frame = parse_frame_datagram(datagram, chip)
+            except ValueError as error:
+                malformed += 1
+                print(f"Ignored malformed datagram: {error}", file=sys.stderr)
+                continue
+            # TX heartbeat frames (role=tx, empty payload) are liveness
+            # signals, not measurements: they have no spectrum to log.
+            if frame.role == "tx" or not frame.payload:
+                tx_ignored += 1
+                continue
+            try:
                 spectrum = amplitude_spectrum(frame.payload,
                                               frame.first_word_invalid)
             except ValueError as error:
@@ -189,7 +200,7 @@ def run_udp(recorder, sink, listen, port, chip, count, timeout,
                 print(f"... {frames} frames ({rate:.1f}/s), "
                       f"last amp_mean={row['amp_mean']}", file=sys.stderr)
                 last_report = now
-    return frames, malformed
+    return frames, malformed, tx_ignored
 
 
 def run_replay(recorder, sink, path, progress_every=200):
@@ -266,7 +277,7 @@ def main(argv=None):
     recorder = AmpRecorder(per_subcarrier=args.per_subcarrier)
     sink = CsvSink(output_path)
 
-    frames, malformed = 0, 0
+    frames, malformed, tx_ignored = 0, 0, 0
     try:
         if args.replay:
             print(f"Converting {args.replay} -> {output_path}")
@@ -275,7 +286,7 @@ def main(argv=None):
             print(f"Logging CSI amplitude to {output_path} "
                   f"(UDP {args.listen}:{args.port})")
             print("Press Ctrl-C to stop.")
-            frames, malformed = run_udp(recorder, sink, args.listen,
+            frames, malformed, tx_ignored = run_udp(recorder, sink, args.listen,
                                         args.port, args.chip,
                                         args.count, args.timeout)
     except KeyboardInterrupt:
@@ -288,7 +299,7 @@ def main(argv=None):
         sink.close()
 
     print(f"Logged {frames} frames to {output_path}; "
-          f"ignored {malformed} malformed.")
+          f"ignored {malformed} malformed; skipped {tx_ignored} TX heartbeat(s).")
     return 0
 
 
