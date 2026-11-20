@@ -38,7 +38,7 @@ def make_record(node_id, sequence, host_time, amp=10, rx_ts_us=None,
     }
 
 
-def add(stream, sequence, host_time, amp=10, node_time_s=None):
+def add(stream, sequence, host_time, amp=10, node_time_s=None, mac=None):
     return stream.add(
         sequence=sequence,
         payload=make_payload(amp),
@@ -46,6 +46,7 @@ def add(stream, sequence, host_time, amp=10, node_time_s=None):
         rssi=-40,
         host_time=host_time,
         node_time_s=node_time_s,
+        mac=mac,
     )
 
 
@@ -115,6 +116,15 @@ class SequenceTests(unittest.TestCase):
 
         add(stream, 6, host_time=14.0)
         self.assertEqual(stream.gaps, 2)
+
+    def test_tx_mac_change_is_counted(self):
+        stream = NodeStream(1, dt=0.1)
+        with_mac = dict(mac=bytes.fromhex("30169d5fedd0"))
+        add(stream, 1, host_time=10.0, **with_mac)
+        add(stream, 2, host_time=10.1, **with_mac)
+        self.assertEqual(stream.mac_changes, 0)
+        add(stream, 3, host_time=10.2, mac=bytes.fromhex("aabbccddeeff"))
+        self.assertEqual(stream.mac_changes, 1)
 
 
 class BucketTests(unittest.TestCase):

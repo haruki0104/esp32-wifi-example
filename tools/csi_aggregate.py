@@ -136,10 +136,12 @@ class NodeStream:
         self.frames = 0
         self.duplicates = 0
         self.gaps = 0
+        self.last_mac = None
+        self.mac_changes = 0
         self.buckets = {}
 
     def add(self, sequence, payload, first_word_invalid, rssi, host_time,
-            node_time_s=None):
+            node_time_s=None, mac=None):
         """Register one frame; returns False when it is a duplicate."""
         seq = int(sequence) & 0xFFFFFFFF
         if seq in self.seen:
@@ -149,6 +151,14 @@ class NodeStream:
 
         self.gaps += seq_gap(self.last_seq, seq)
         self.last_seq = seq
+
+        # The TX MAC should never change for a node: a new one means the board
+        # re-associated to a different AP (the fallback network) and its frames
+        # are no longer the measurement link.
+        if mac is not None:
+            if self.last_mac is not None and bytes(mac) != self.last_mac:
+                self.mac_changes += 1
+            self.last_mac = bytes(mac)
 
         if node_time_s is not None:
             self.clock.add(node_time_s, host_time)
@@ -272,6 +282,7 @@ def record_from_jsonl(record):
         "payload": payload,
         "first_word_invalid": bool(record.get("first_word_invalid", False)),
         "rssi": int(record.get("rssi_dbm", 0)),
+        "mac": bytes.fromhex(record.get("source_mac", "").replace(":", "")),
         "host_time": host_time,
         "node_time_s": (rx_ts_us / 1e6) if rx_ts_us else None,
     }
@@ -341,6 +352,7 @@ def replay(paths, dt):
                     rssi=record["rssi"],
                     host_time=record["host_time"],
                     node_time_s=record["node_time_s"],
+                    mac=record["mac"],
                 )
     return streams
 
@@ -400,6 +412,7 @@ def run_live(listen, port, dt, duration, output_dir, expected_nodes,
                     host_time=host_time,
                     node_time_s=((frame.rx_ts_us / 1e6)
                                  if frame.rx_ts_us else None),
+                    mac=frame.mac,
                 )
                 record = frame_to_record(frame)
                 record["sender_ip"] = addr[0]
@@ -425,6 +438,8 @@ def summarise(streams, output_dir, dt):
             f"node {node_id} (chip {stream.chip}): {stream.frames} frames, "
             f"{stream.gaps} seq gaps, "
             f"{stream.duplicates} duplicates, "
+            f"txmac {stream.last_mac.hex() if stream.last_mac else '?'}"
+            f"{f', {stream.mac_changes} TX-MAC CHANGES (wrong AP!)' if stream.mac_changes else ''}, "
             f"clock {stream.clock.ppm:+.1f} ppm rms {stream.clock.rms_ms:.2f} ms"
             f"{f', {stream.clock.fallbacks} arrival fallbacks' if stream.clock.fallbacks else ''}"
         )
