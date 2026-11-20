@@ -192,6 +192,9 @@ def udp_worker(state, listen, port, chip, stop_event, output_file=None):
                 except ValueError:
                     state.note_malformed()
                     continue
+                # TX heartbeats carry no spectrum; they are not plot data.
+                if frame.role == "tx" or not frame.payload:
+                    continue
                 try:
                     spectrum = amplitude_spectrum(frame.payload, frame.first_word_invalid)
                 except ValueError:
