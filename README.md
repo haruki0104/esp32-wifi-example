@@ -4,12 +4,12 @@ PlatformIO firmware for an ESP32 Dev Module and a 128x64 SSD1306 OLED. It
 joins the configured Wi-Fi network, shows Asia/Taipei local time, and streams
 Channel State Information from that access point to a host computer over Wi-Fi.
 
-The current targets are two ESP32 Dev Module roles (`esp32_rx1` and
-`esp32_tx`, selected per board with `-D CSI_NODE_ID`). An ESP32-S3-DevKitC-1
-environment is reserved in `platformio.ini` but is not built: its module
-variant and OLED pins are not known, and ESP32-S3 has no GPIO 22.
+M0 topology: the classic ESP32 is the TX node (`esp32_tx`, node 255,
+with OLED); the two ESP32-S3-N16R8 boards are RX nodes (`esp32s3_rx1`
+node 1, `esp32s3_rx2` node 2, headless via `-D NO_OLED`). A spare
+`esp32_rx1` env remains for a classic-ESP32 RX if needed.
 ESP32-C5 cannot be targeted: the pinned platform and Arduino core ship no
-C5 board definitions, so M0 runs on ESP32 (and S3 once its module is known).
+C5 board definitions, so M0 runs on ESP32 + S3.
 
 ## What it does
 
@@ -100,14 +100,16 @@ guess their I/Q layout.
 ## Build, upload, and capture
 
 ```sh
-pio run -e esp32_rx1 -e esp32_tx
-pio run -e esp32_rx1 -t upload --upload-port /dev/ttyUSBx
-pio run -e esp32_tx -t upload --upload-port /dev/ttyUSBy
+pio run
+pio run -e esp32_tx -t upload --upload-port /dev/ttyUSBx
+pio run -e esp32s3_rx1 -t upload --upload-port /dev/ttyUSBy
+pio run -e esp32s3_rx2 -t upload --upload-port /dev/ttyUSBz
 ```
 
-Replace `/dev/ttyUSBx` with the board's serial device. Flash the RX build
-onto each RX board (one env per node id; add envs as boards arrive) and
-the TX build onto the dedicated TX board.
+Replace `/dev/ttyUSBx` with each board's serial device (S3 boards enumerate
+as USB CDC; if no port appears, hold BOOT while pressing RESET). Flash the
+TX build onto the classic ESP32 and one RX build per S3 board (node ids
+1 and 2 are baked in via `-D CSI_NODE_ID`).
 
 Join the host computer to the `csi-tx` softAP network (or route to it) and
 set `CSI_HOST_IP` to the host's address on that network so RX frames and

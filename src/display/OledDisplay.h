@@ -7,6 +7,25 @@
 
 #include <string>
 
+#ifdef NO_OLED
+// Headless board (e.g. ESP32-S3-N16R8 without an external OLED): keep the
+// same call sites compiling, but do nothing. begin() reports success so
+// setup() does not hang waiting for hardware that is intentionally absent.
+class OledDisplay {
+ public:
+  bool begin() { return true; }
+  void showStatus(const char*, const char* = "", const char* = "") {}
+  void showStatus(const String&) {}
+  void showStatus(const String&, const String&, const String& = "") {}
+  void showStatusF(const String&) {}
+  void showStatusF(const char*) {}
+  template <typename... Args>
+  void showStatusF(const char*, const Args&...) {}
+  template <typename... Args>
+  void showStatusF(const String&, const Args&...) {}
+  void showClock(const tm*, const char*) {}
+};
+#else
 class OledDisplay {
  public:
   bool begin();
@@ -53,3 +72,4 @@ class OledDisplay {
     return value;
   }
 };
+#endif

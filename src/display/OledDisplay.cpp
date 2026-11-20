@@ -1,5 +1,9 @@
 #include "OledDisplay.h"
 
+#ifdef NO_OLED
+// No-op implementation; declarations are inline in the header.
+#else
+
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Wire.h>
@@ -92,3 +96,5 @@ void OledDisplay::showClock(const tm* localTime, const char* statusLine) {
 
   screen.display();
 }
+
+#endif  // NO_OLED

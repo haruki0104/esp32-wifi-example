@@ -7,7 +7,7 @@ PlatformIO Arduino firmware (`espressif32@7.0.1`) for an ESP32 Dev Module, plus 
 From the repo root:
 
 - `python3 -m unittest discover -s tools -p 'test_*.py'` — the only automated tests. There is no `pio test` target.
-- `pio run -e esp32_rx1` / `pio run -e esp32_tx` — the two firmware envs (`default_envs` builds both). Roles come from `-D CSI_NODE_ID` (1..254 RX, 255 TX softAP, 0 unset). Leave the commented `esp32s3` env commented: its module variant and OLED pins are unknown, and ESP32-S3 has no GPIO 22. ESP32-C5 has no env: the pinned platform/Arduino core ships no C5 board definitions.
+- `pio run` builds `default_envs` (`esp32_tx`, `esp32s3_rx1`, `esp32s3_rx2`). Roles come from `-D CSI_NODE_ID` (1..254 RX, 255 TX softAP, 0 unset). Inventory: 1x classic ESP32 (TX) + 2x ESP32-S3-N16R8 (RX, headless). ESP32-C5 has no env: the pinned platform/Arduino core ships no C5 board definitions.
 
 `include/secrets.h` is required to compile and is gitignored. Create it from `include/secrets.example.h` only when the file is missing. Do not overwrite an existing file, and do not commit it.
 
@@ -18,7 +18,7 @@ From the repo root:
 - RX nodes filter to the TX softAP BSSID and forward to `CSI_HOST_IP`; the TX node (`CSI_NODE_ID=255`) runs the softAP, broadcasts the measurement stream, and unicasts empty heartbeat frames (role TX). Only `src/sketch_jul29a.ino` starts these modes.
 - Leave `WiFi.setSleep(false)` in place while CSI is running. Leave the POSIX zone string `CST-8` (Asia/Taipei). `CST+8` is the opposite offset; `configTzTime` takes a POSIX string, not an IANA name.
 - `src/sketch_jul29a.ino` is the only file that calls across `src/network/`, `src/time/`, `src/csi/`, and `src/display/`.
-- OLED pins come from `-D OLED_SDA` / `-D OLED_SCL` in `platformio.ini`. Missing flags fail the build.
+- OLED pins come from `-D OLED_SDA` / `-D OLED_SCL` in `platformio.ini`. Missing flags fail the build, except on `-D NO_OLED` boards (S3-N16R8 without an external OLED), where the display is a no-op and `begin()` succeeds so `setup()` never blocks.
 - This application stays on the board. Espressif `esp-csi` examples are reference only (`docs/esp-csi-firmware.md`). This firmware does not classify presence or posture (`docs/csi-human-sensing.md`).
 
 Ignored, and not for commits: `.pio/`, `.vscode/` (generated; change `platformio.ini` instead), `captures/`, `include/secrets.h`.
