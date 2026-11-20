@@ -4,9 +4,12 @@ PlatformIO firmware for an ESP32 Dev Module and a 128x64 SSD1306 OLED. It
 joins the configured Wi-Fi network, shows Asia/Taipei local time, and streams
 Channel State Information from that access point to a host computer over Wi-Fi.
 
-The current target is the original ESP32 (`esp32dev`). An ESP32-S3-DevKitC-1
-environment is reserved in `platformio.ini` but is not built: its module
-variant and OLED pins are not known, and ESP32-S3 has no GPIO 22.
+M0 topology: the classic ESP32 is the TX node (`esp32_tx`, node 255,
+with OLED); the two ESP32-S3-N16R8 boards are RX nodes (`esp32s3_rx1`
+node 1, `esp32s3_rx2` node 2, headless via `-D NO_OLED`). A spare
+`esp32_rx1` env remains for a classic-ESP32 RX if needed.
+ESP32-C5 cannot be targeted: the pinned platform and Arduino core ship no
+C5 board definitions, so M0 runs on ESP32 + S3.
 
 ## What it does
 
@@ -59,22 +62,24 @@ replaces this application. See
 
 ## CSI frame
 
-Each UDP datagram contains one 24-byte little-endian header followed by the
-unmodified CSI buffer. The frame format remains compatible with the serial
-reader and existing captures:
+Each UDP datagram contains one 32-byte little-endian v2 header followed by
+the unmodified CSI buffer. Version 1 (24-byte) captures stay readable on
+the host; the firmware emits version 2 only:
 
 | Field | Meaning |
 |---|---|
 | magic | `CSI1` |
-| version | `1` |
-| chip | `1` on this ESP32; `2` is reserved for ESP32-S3 |
+| version | `2` |
+| chip | `1` ESP32, `2` ESP32-S3 |
 | len | payload bytes, at most 512 |
-| seq | sequence of queued samples |
+| seq | per-node sequence, wraps |
+| rx_ts_us | `esp_timer_get_time()` on the RX node at capture |
+| node_id | receiver identity (`-D CSI_NODE_ID`; 255 = TX, 0 = unset) |
+| flags | bit0 first-word-invalid, bits1-2 bandwidth, bit3 TX/RX role |
 | rssi | dBm |
 | channel | primary channel |
-| first_word_invalid | non-zero means the first four payload bytes are invalid |
-| mac | source MAC, filtered to the AP BSSID |
 | drops | samples dropped since the previous emitted frame |
+| mac | transmitter (peer) MAC; RX nodes filter to the TX node |
 
 On the ESP32 Dev Module used here, LLTF payloads are 128 bytes and
 `first_word_invalid` is set. The host stores those bytes as hex and does not
@@ -95,11 +100,21 @@ guess their I/Q layout.
 ## Build, upload, and capture
 
 ```sh
-pio run -e esp32dev
-pio run -e esp32dev -t upload --upload-port /dev/ttyUSBx
+pio run
+pio run -e esp32_tx -t upload --upload-port /dev/ttyUSBx
+pio run -e esp32s3_rx1 -t upload --upload-port /dev/ttyUSBy
+pio run -e esp32s3_rx2 -t upload --upload-port /dev/ttyUSBz
 ```
 
-Replace `/dev/ttyUSBx` with the board's serial device. USB serial is used for
+Replace `/dev/ttyUSBx` with each board's serial device (S3 boards enumerate
+as USB CDC; if no port appears, hold BOOT while pressing RESET). Flash the
+TX build onto the classic ESP32 and one RX build per S3 board (node ids
+1 and 2 are baked in via `-D CSI_NODE_ID`).
+
+Join the host computer to the `csi-tx` softAP network (or route to it) and
+set `CSI_HOST_IP` to the host's address on that network so RX frames and
+TX heartbeats arrive. The TX board broadcasts the measurement stream while
+RX boards associate to it as stations. USB serial is used for
 firmware upload and status logs; it is not used to capture CSI.
 
 Before building, copy `include/secrets.example.h` to `include/secrets.h` and
