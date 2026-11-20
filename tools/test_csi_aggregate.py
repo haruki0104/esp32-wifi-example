@@ -95,6 +95,34 @@ class ClockFitTests(unittest.TestCase):
         self.assertAlmostEqual(clock.map(900.0, fallback=105.0), 105.0)
         self.assertEqual(clock.fallbacks, 1)
 
+    def test_refit_cadence_bounds_the_work(self):
+        # A 40 fps stream refits every 20 pairs instead of every frame; the
+        # count is what keeps a ten-minute capture from taking minutes.
+        clock = LinearClock(min_pairs=20, refit_every=20)
+        for index in range(400):
+            clock.add(index / 40.0, 1000.0 + index / 40.0)
+
+        self.assertTrue(clock.ready)
+        self.assertLessEqual(clock.refits, 20)
+        self.assertGreaterEqual(clock.refits, 19)
+
+    def test_cadence_keeps_the_drift_estimate(self):
+        # ppm is (host-per-node slope - 1), so a node clock running fast reads
+        # negative. 100 ppm of injected drift must come back the same whether
+        # the clock refits on every frame or every 20.
+        def ppm_for(refit_every):
+            clock = LinearClock(min_pairs=20, refit_every=refit_every)
+            for index in range(600):
+                host = 1000.0 + index / 40.0
+                node = 500.0 + (index / 40.0) * (1.0 + 100e-6)
+                clock.add(node, host)
+            return clock.ppm
+
+        every_frame = ppm_for(1)
+        cadence = ppm_for(20)
+        self.assertAlmostEqual(cadence, every_frame, delta=1.0)
+        self.assertAlmostEqual(cadence, -100.0, delta=1.0)
+
 
 class SequenceTests(unittest.TestCase):
     def test_gap_arithmetic(self):

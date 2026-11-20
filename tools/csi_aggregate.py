@@ -25,6 +25,7 @@ Examples:
 
 import argparse
 import csv
+import heapq
 import json
 import math
 import socket
@@ -49,6 +50,10 @@ DEFAULT_DT = 0.05
 DEFAULT_FIT_WINDOW_S = 120.0
 MIN_FIT_PAIRS = 20
 TRIM_FRACTION = 0.10
+# Refitting the clock on every frame costs O(window) per frame, which turns a
+# ten-minute capture into minutes of wall time for no accuracy gain: the slack
+# over 20 frames (0.5 s at 40 fps) moves a corrected timestamp by microseconds.
+REFIT_EVERY_PAIRS = 20
 
 CSV_COLUMNS = [
     "t_unix",
@@ -75,10 +80,19 @@ def fit_clock(pairs, trim=TRIM_FRACTION):
 
     def solve(sample):
         n = len(sample)
-        mean_x = sum(x for x, _ in sample) / n
-        mean_y = sum(y for _, y in sample) / n
-        sxx = sum((x - mean_x) ** 2 for x, _ in sample)
-        sxy = sum((x - mean_x) * (y - mean_y) for x, y in sample)
+        sum_x = 0.0
+        sum_y = 0.0
+        for x, y in sample:
+            sum_x += x
+            sum_y += y
+        mean_x = sum_x / n
+        mean_y = sum_y / n
+        sxx = 0.0
+        sxy = 0.0
+        for x, y in sample:
+            dx = x - mean_x
+            sxx += dx * dx
+            sxy += dx * (y - mean_y)
         if sxx == 0:
             return 1.0, mean_y - mean_x
         slope = sxy / sxx
@@ -86,12 +100,13 @@ def fit_clock(pairs, trim=TRIM_FRACTION):
 
     slope, intercept = solve(pts)
     if trim > 0 and len(pts) >= 8:
-        residuals = sorted(
+        keep = max(2, int(round(len(pts) * (1.0 - trim))))
+        residuals = heapq.nsmallest(
+            keep,
             ((abs(y - (slope * x + intercept)), x, y) for x, y in pts),
             key=lambda item: item[0],
         )
-        keep = max(2, int(round(len(residuals) * (1.0 - trim))))
-        kept = [(x, y) for _, x, y in residuals[:keep]]
+        kept = [(x, y) for _, x, y in residuals]
         slope, intercept = solve(kept)
         pts = kept
 
@@ -219,15 +234,18 @@ class LinearClock:
     """Sliding affine map from node time to host time."""
 
     def __init__(self, window_s=DEFAULT_FIT_WINDOW_S, min_pairs=MIN_FIT_PAIRS,
-                 max_offset_s=5.0):
+                 max_offset_s=5.0, refit_every=REFIT_EVERY_PAIRS):
         self.window_s = float(window_s)
         self.min_pairs = int(min_pairs)
         self.max_offset_s = float(max_offset_s)
+        self.refit_every = max(1, int(refit_every))
         self.pairs = deque()
         self.slope = 1.0
         self.intercept = 0.0
         self.rms_ms = 0.0
         self.fitted_pairs = 0
+        self.since_fit = 0
+        self.refits = 0
         self.ready = False
         self.fallbacks = 0
 
@@ -236,10 +254,17 @@ class LinearClock:
         newest = self.pairs[-1][0]
         while self.pairs and self.pairs[0][0] < newest - self.window_s:
             self.pairs.popleft()
-        if len(self.pairs) >= self.min_pairs:
-            self.slope, self.intercept, self.rms_ms, self.fitted_pairs = (
-                fit_clock(self.pairs))
-            self.ready = True
+        self.since_fit += 1
+        if len(self.pairs) < self.min_pairs:
+            return
+        # Refit at a bounded cadence; see REFIT_EVERY_PAIRS for the error budget.
+        if self.ready and self.since_fit < self.refit_every:
+            return
+        self.slope, self.intercept, self.rms_ms, self.fitted_pairs = (
+            fit_clock(self.pairs))
+        self.since_fit = 0
+        self.refits += 1
+        self.ready = True
 
     def map(self, node_s, fallback):
         """Node seconds -> host-clock seconds, or `fallback` when untrusted.
