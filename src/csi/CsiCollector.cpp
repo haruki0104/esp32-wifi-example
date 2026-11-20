@@ -1,6 +1,7 @@
 #include "CsiCollector.h"
 
 #include <WiFi.h>
+#include <esp_timer.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -8,39 +9,15 @@
 #include <ping/ping_sock.h>
 #include <string.h>
 
+#include "CsiFrameV2.h"
+
 namespace {
 
-constexpr uint32_t kMagic = 0x31495343;  // little-endian bytes 'C','S','I','1'
-constexpr uint8_t kVersion = 1;
 constexpr size_t kSlotCount = 4;
 constexpr size_t kMaxLen = 512;
 constexpr uint32_t kPingIntervalMs = 100;
 constexpr int kFramesPerLoop = 4;
 constexpr uint16_t kLocalUdpPort = 5006;
-
-#if CONFIG_IDF_TARGET_ESP32
-constexpr uint8_t kChipId = 1;
-#elif CONFIG_IDF_TARGET_ESP32S3
-constexpr uint8_t kChipId = 2;
-#else
-#error CSI collector supports only ESP32 and ESP32-S3
-#endif
-
-struct __attribute__((packed)) FrameHeader {
-  uint32_t magic;
-  uint8_t version;
-  uint8_t chip;
-  uint16_t len;
-  uint32_t seq;
-  int8_t rssi;
-  uint8_t channel;
-  uint8_t firstWordInvalid;
-  uint8_t reserved;
-  uint8_t mac[6];
-  uint16_t drops;
-};
-
-static_assert(sizeof(FrameHeader) == 24, "CSI frame header must be 24 bytes");
 
 struct Slot {
   int8_t rssi;
@@ -49,6 +26,7 @@ struct Slot {
   uint8_t mac[6];
   uint16_t len;
   uint32_t seq;
+  uint64_t tsUs;
   int8_t data[kMaxLen];
 };
 
@@ -92,6 +70,7 @@ void csiRxCallback(void* ctx, wifi_csi_info_t* info) {
   slot.rssi = info->rx_ctrl.rssi;
   slot.channel = static_cast<uint8_t>(info->rx_ctrl.channel);
   slot.firstWordInvalid = info->first_word_invalid ? 1 : 0;
+  slot.tsUs = static_cast<uint64_t>(esp_timer_get_time());
   memcpy(slot.mac, info->mac, sizeof(slot.mac));
   slot.len = info->len;
   if (info->len > 0) {
@@ -312,15 +291,17 @@ void CsiCollector::sendPending() {
     const uint32_t dropsSince = dropsNow - emittedDrops;
     emittedDrops = dropsNow;
 
-    FrameHeader header = {};
-    header.magic = kMagic;
-    header.version = kVersion;
-    header.chip = kChipId;
+    csi::FrameV2Header header = {};
+    header.magic = csi::kMagic;
+    header.version = csi::kVersion;
+    header.chip = csi::kChipId;
     header.len = slot.len;
     header.seq = slot.seq;
+    header.rxTsUs = slot.tsUs;
+    header.nodeId = CSI_NODE_ID;
+    header.flags = slot.firstWordInvalid ? csi::kFlagFirstWordInvalid : 0;
     header.rssi = slot.rssi;
     header.channel = slot.channel;
-    header.firstWordInvalid = slot.firstWordInvalid;
     memcpy(header.mac, slot.mac, sizeof(header.mac));
     header.drops = dropsSince > 0xFFFF ? 0xFFFF
                                        : static_cast<uint16_t>(dropsSince);

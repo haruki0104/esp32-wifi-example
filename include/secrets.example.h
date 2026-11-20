@@ -13,6 +13,12 @@
 #define CSI_HOST_IP "192.168.1.100"
 #define CSI_UDP_PORT 5005
 
+// M0 TX softAP network that RX nodes join (trusted lab only). RX boards
+// try this network first; the host computer must also join it (or be
+// routed to it) at CSI_HOST_IP so RX frames and TX heartbeats arrive.
+#define CSI_TX_SSID "csi-tx"
+#define CSI_TX_PASSWORD "csi-link-key"
+
 // MQTT distribution (Phase 0 defaults; trusted LAN only).
 // Broker runs on the host computer; keep real values in the ignored
 // local include/secrets.h, never in this example file.
