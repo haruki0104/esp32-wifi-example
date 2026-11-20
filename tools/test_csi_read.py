@@ -8,6 +8,7 @@ from csi_read import (
     FLAG_ROLE_TX,
     HEADER,
     HEADER_V2,
+    KNOWN_CHIPS,
     MAGIC,
     MAX_FRAME_SIZE,
     frame_to_record,
@@ -203,6 +204,19 @@ class MultiNodeFrameTests(unittest.TestCase):
 
         self.assertEqual(len(wire), MAX_FRAME_SIZE)
         self.assertEqual(parse_frame(wire).payload, b"\x00" * 512)
+
+    def test_chip_sets_accept_s3_and_reject_unknown(self):
+        s3 = bytearray(make_frame_v2())
+        s3[5] = 2  # chip byte
+
+        self.assertEqual(parse_frame(bytes(s3), KNOWN_CHIPS).chip, 2)
+        with self.assertRaisesRegex(ValueError, "unexpected chip ID"):
+            parse_frame(bytes(s3), 1)  # single-id callers stay strict
+
+        c5 = bytearray(make_frame_v2())
+        c5[5] = 5
+        with self.assertRaisesRegex(ValueError, "unexpected chip ID"):
+            parse_frame(bytes(c5), KNOWN_CHIPS)
 
     def test_record_carries_v2_fields(self):
         record = frame_to_record(parse_frame(make_frame_v2()))

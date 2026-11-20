@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 import time
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,19 @@ FLAG_FIRST_WORD_INVALID = 0x01
 FLAG_BANDWIDTH_MASK = 0x06
 FLAG_BANDWIDTH_40MHZ = 0x02
 FLAG_ROLE_TX = 0x08
+
+# Chips this host understands: 1 = ESP32, 2 = ESP32-S3 (see README). A chip id
+# outside this set is rejected rather than silently mixed into a dataset.
+KNOWN_CHIPS = frozenset({1, 2})
+
+
+def _chip_allowed(chip, expected):
+    """`expected` may be None (any), a single id, or a collection of ids."""
+    if expected is None:
+        return True
+    if isinstance(expected, int):
+        return chip == expected
+    return chip in expected
 
 
 @dataclass(frozen=True)
@@ -97,7 +111,8 @@ def header_size(data):
     raise ValueError(f"unsupported CSI1 version: {version}")
 
 
-def unpack_header(data, expected_chip=1, size=None):
+def unpack_header(data, expected_chip: int | Collection[int] | None = 1,
+                  size=None):
     """Decode one header; raises ValueError when it is not a valid header.
 
     A streaming caller can pass the header length it already derived from
@@ -127,7 +142,7 @@ def unpack_header(data, expected_chip=1, size=None):
             mac,
             drops,
         ) = HEADER_V1.unpack_from(data)
-        if chip != expected_chip:
+        if not _chip_allowed(chip, expected_chip):
             raise ValueError(f"unexpected chip ID: {chip}")
         if length > MAX_LEN:
             raise ValueError(f"payload exceeds {MAX_LEN} bytes: {length}")
@@ -153,7 +168,7 @@ def unpack_header(data, expected_chip=1, size=None):
             drops,
             mac,
         ) = HEADER_V2.unpack_from(data)
-        if chip != expected_chip:
+        if not _chip_allowed(chip, expected_chip):
             raise ValueError(f"unexpected chip ID: {chip}")
         if length > MAX_LEN:
             raise ValueError(f"payload exceeds {MAX_LEN} bytes: {length}")
@@ -168,7 +183,7 @@ def unpack_header(data, expected_chip=1, size=None):
     raise ValueError(f"unsupported CSI1 version: {version}")
 
 
-def parse_frame(data, expected_chip=1):
+def parse_frame(data, expected_chip: int | Collection[int] | None = 1):
     """Strictly decode exactly one complete frame (header + payload)."""
     head = unpack_header(data, expected_chip)
     if len(data) != head.size + head.length:

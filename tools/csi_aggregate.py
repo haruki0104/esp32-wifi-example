@@ -32,11 +32,18 @@ import statistics
 import sys
 import time
 from collections import deque
+from collections.abc import Collection
 from datetime import datetime, timezone
 from pathlib import Path
 
 from csi_frame import amplitude_spectrum
-from csi_read import MAX_FRAME_SIZE, NODE_ID_TX, frame_to_record, parse_frame
+from csi_read import (
+    KNOWN_CHIPS,
+    MAX_FRAME_SIZE,
+    NODE_ID_TX,
+    frame_to_record,
+    parse_frame,
+)
 
 DEFAULT_DT = 0.05
 DEFAULT_FIT_WINDOW_S = 120.0
@@ -120,6 +127,7 @@ class NodeStream:
     def __init__(self, node_id, dt, fit_window_s=DEFAULT_FIT_WINDOW_S,
                  clock=None):
         self.node_id = int(node_id)
+        self.chip: int | None = None
         self.dt = float(dt)
         self.fit_window_s = float(fit_window_s)
         self.clock = clock or LinearClock(fit_window_s)
@@ -259,6 +267,7 @@ def record_from_jsonl(record):
     rx_ts_us = record.get("rx_ts_us")
     return {
         "node_id": int(node_id),
+        "chip": int(record.get("chip", 1)),
         "sequence": int(record["sequence"]),
         "payload": payload,
         "first_word_invalid": bool(record.get("first_word_invalid", False)),
@@ -324,6 +333,7 @@ def replay(paths, dt):
                 if stream is None:
                     stream = streams[record["node_id"]] = NodeStream(
                         record["node_id"], dt)
+                stream.chip = record["chip"]
                 stream.add(
                     sequence=record["sequence"],
                     payload=record["payload"],
@@ -335,7 +345,8 @@ def replay(paths, dt):
     return streams
 
 
-def run_live(listen, port, dt, duration, output_dir, expected_nodes):
+def run_live(listen, port, dt, duration, output_dir, expected_nodes,
+             expected_chips: Collection[int] = KNOWN_CHIPS):
     """Receive all RX streams on one socket; node_id comes from the frame."""
     streams = {}
     writers = {}
@@ -364,7 +375,7 @@ def run_live(listen, port, dt, duration, output_dir, expected_nodes):
                     continue
                 host_time = time.time()
                 try:
-                    frame = parse_frame(datagram)
+                    frame = parse_frame(datagram, expected_chips)
                 except ValueError as error:
                     malformed += 1
                     print(f"Ignored malformed datagram from {addr[0]}: {error}",
@@ -380,6 +391,7 @@ def run_live(listen, port, dt, duration, output_dir, expected_nodes):
                 if stream is None:
                     stream = streams[frame.node_id] = NodeStream(
                         frame.node_id, dt)
+                stream.chip = frame.chip
                 stream.add(
                     sequence=frame.sequence,
                     payload=frame.payload,
@@ -410,7 +422,8 @@ def summarise(streams, output_dir, dt):
     for node_id in sorted(streams):
         stream = streams[node_id]
         lines.append(
-            f"node {node_id}: {stream.frames} frames, {stream.gaps} seq gaps, "
+            f"node {node_id} (chip {stream.chip}): {stream.frames} frames, "
+            f"{stream.gaps} seq gaps, "
             f"{stream.duplicates} duplicates, "
             f"clock {stream.clock.ppm:+.1f} ppm rms {stream.clock.rms_ms:.2f} ms"
             f"{f', {stream.clock.fallbacks} arrival fallbacks' if stream.clock.fallbacks else ''}"
@@ -436,6 +449,9 @@ def main(argv=None):
                         help=f"resample grid in seconds (default {DEFAULT_DT})")
     parser.add_argument("--nodes", default="",
                         help="expected node ids, comma separated (warns on others)")
+    parser.add_argument("--chips", default="1,2",
+                        help="accepted chip ids, comma separated "
+                             "(1 = ESP32, 2 = ESP32-S3; default 1,2)")
     parser.add_argument("--duration", type=float, default=0,
                         help="stop after N seconds of live capture (0 = Ctrl-C)")
     parser.add_argument("-o", "--output-dir", type=Path, default=None,
@@ -449,6 +465,16 @@ def main(argv=None):
     if args.duration < 0:
         parser.error("--duration must be 0 or greater")
     expected = {int(part) for part in args.nodes.split(",") if part.strip()}
+    try:
+        expected_chips = {int(part) for part in args.chips.split(",")
+                          if part.strip()}
+    except ValueError:
+        parser.error("--chips must be comma-separated integers")
+    unsupported = expected_chips - KNOWN_CHIPS
+    if unsupported:
+        parser.error(
+            f"unsupported chip id(s) {sorted(unsupported)}; "
+            f"this host understands {sorted(KNOWN_CHIPS)}")
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_dir = args.output_dir or Path("captures") / f"agg-{stamp}"
@@ -468,7 +494,7 @@ def main(argv=None):
         try:
             streams, frame_total, malformed, seen_tx = run_live(
                 args.listen, args.port, args.dt, args.duration,
-                output_dir, expected)
+                output_dir, expected, expected_chips)
         except KeyboardInterrupt:
             print("\nStopped by user.")
             streams, frame_total, malformed, seen_tx = {}, 0, 0, 0
