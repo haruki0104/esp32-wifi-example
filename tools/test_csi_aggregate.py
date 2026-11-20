@@ -119,9 +119,9 @@ class SequenceTests(unittest.TestCase):
 
     def test_tx_mac_change_is_counted(self):
         stream = NodeStream(1, dt=0.1)
-        with_mac = dict(mac=bytes.fromhex("30169d5fedd0"))
-        add(stream, 1, host_time=10.0, **with_mac)
-        add(stream, 2, host_time=10.1, **with_mac)
+        mac_a = bytes.fromhex("30169d5fedd0")
+        add(stream, 1, host_time=10.0, mac=mac_a)
+        add(stream, 2, host_time=10.1, mac=mac_a)
         self.assertEqual(stream.mac_changes, 0)
         add(stream, 3, host_time=10.2, mac=bytes.fromhex("aabbccddeeff"))
         self.assertEqual(stream.mac_changes, 1)
