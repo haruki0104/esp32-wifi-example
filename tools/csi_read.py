@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 import time
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,9 +13,73 @@ import struct
 
 MAGIC_BYTES = b"CSI1"
 MAGIC = 0x31495343
-HEADER = struct.Struct("<IBBHIbBBB6sH")
+# Version 1: the single-ESP32 frame that archived captures use.
+HEADER_V1 = struct.Struct("<IBBHIbBBB6sH")  # 24 bytes
+# Version 2: multi-node frame; layout frozen in docs/csi-multi-node-design.md.
+HEADER_V2 = struct.Struct("<IBBHIQBBbBH6s")  # 32 bytes
+HEADER = HEADER_V1  # legacy name for the v1 header
 MAX_LEN = 512
+MAX_HEADER_SIZE = max(HEADER_V1.size, HEADER_V2.size)
+MAX_FRAME_SIZE = MAX_HEADER_SIZE + MAX_LEN
 MAX_TEXT_BUFFER = 65536
+
+NODE_ID_UNSET = 0
+NODE_ID_TX = 255
+
+FLAG_FIRST_WORD_INVALID = 0x01
+FLAG_BANDWIDTH_MASK = 0x06
+FLAG_BANDWIDTH_40MHZ = 0x02
+FLAG_ROLE_TX = 0x08
+
+# Chips this host understands: 1 = ESP32, 2 = ESP32-S3 (see README). A chip id
+# outside this set is rejected rather than silently mixed into a dataset.
+KNOWN_CHIPS = frozenset({1, 2})
+
+
+def _chip_allowed(chip, expected):
+    """`expected` may be None (any), a single id, or a collection of ids."""
+    if expected is None:
+        return True
+    if isinstance(expected, int):
+        return chip == expected
+    return chip in expected
+
+
+@dataclass(frozen=True)
+class HeaderFields:
+    """One decoded CSI1 header, with the version-specific bits normalized."""
+
+    version: int
+    chip: int
+    length: int
+    sequence: int
+    rx_ts_us: int | None
+    node_id: int
+    flags: int
+    rssi: int
+    channel: int
+    drops: int
+    mac: bytes
+    size: int
+
+    @property
+    def first_word_invalid(self):
+        # v1 carried the flag as its own byte; v2 packs it into bit 0.
+        if self.version == 1:
+            return bool(self.flags)
+        return bool(self.flags & FLAG_FIRST_WORD_INVALID)
+
+    @property
+    def bandwidth_mhz(self):
+        if self.version == 1:
+            return 20
+        return 40 if (self.flags & FLAG_BANDWIDTH_MASK) == FLAG_BANDWIDTH_40MHZ else 20
+
+    @property
+    def role(self):
+        if self.version == 1:
+            return "rx"
+        return "tx" if self.flags & FLAG_ROLE_TX else "rx"
 
 
 @dataclass(frozen=True)
@@ -28,6 +93,117 @@ class CsiFrame:
     mac: bytes
     drops: int
     payload: bytes
+    node_id: int = NODE_ID_UNSET
+    rx_ts_us: int | None = None
+    bandwidth_mhz: int = 20
+    role: str = "rx"
+
+
+def header_size(data):
+    """Header length implied by the version byte, or None if undecidable."""
+    if len(data) < 6:
+        return None
+    version = data[4]
+    if version == 1:
+        return HEADER_V1.size
+    if version == 2:
+        return HEADER_V2.size
+    raise ValueError(f"unsupported CSI1 version: {version}")
+
+
+def unpack_header(data, expected_chip: int | Collection[int] | None = 1,
+                  size=None):
+    """Decode one header; raises ValueError when it is not a valid header.
+
+    A streaming caller can pass the header length it already derived from
+    `header_size`, so the version byte is not inspected twice.
+    """
+    if data[:4] != MAGIC_BYTES:
+        raise ValueError("invalid CSI1 magic")
+    if size is None:
+        size = header_size(data)
+        if size is None:
+            raise ValueError("datagram is shorter than the CSI1 header")
+    if len(data) < size:
+        raise ValueError("datagram is shorter than the CSI1 header")
+
+    version = data[4]
+    if version == 1:
+        (
+            _magic,
+            _version,
+            chip,
+            length,
+            sequence,
+            rssi,
+            channel,
+            first_word_invalid,
+            _reserved,
+            mac,
+            drops,
+        ) = HEADER_V1.unpack_from(data)
+        if not _chip_allowed(chip, expected_chip):
+            raise ValueError(f"unexpected chip ID: {chip}")
+        if length > MAX_LEN:
+            raise ValueError(f"payload exceeds {MAX_LEN} bytes: {length}")
+        return HeaderFields(
+            version=1, chip=chip, length=length, sequence=sequence,
+            rx_ts_us=None, node_id=NODE_ID_UNSET, flags=first_word_invalid,
+            rssi=rssi, channel=channel, drops=drops, mac=mac,
+            size=HEADER_V1.size,
+        )
+
+    if version == 2:
+        (
+            _magic,
+            _version,
+            chip,
+            length,
+            sequence,
+            rx_ts_us,
+            node_id,
+            flags,
+            rssi,
+            channel,
+            drops,
+            mac,
+        ) = HEADER_V2.unpack_from(data)
+        if not _chip_allowed(chip, expected_chip):
+            raise ValueError(f"unexpected chip ID: {chip}")
+        if length > MAX_LEN:
+            raise ValueError(f"payload exceeds {MAX_LEN} bytes: {length}")
+        if node_id == NODE_ID_UNSET:
+            raise ValueError("CSI1 v2 frame has node_id 0 (CSI_NODE_ID unset)")
+        return HeaderFields(
+            version=2, chip=chip, length=length, sequence=sequence,
+            rx_ts_us=rx_ts_us, node_id=node_id, flags=flags, rssi=rssi,
+            channel=channel, drops=drops, mac=mac, size=HEADER_V2.size,
+        )
+
+    raise ValueError(f"unsupported CSI1 version: {version}")
+
+
+def parse_frame(data, expected_chip: int | Collection[int] | None = 1):
+    """Strictly decode exactly one complete frame (header + payload)."""
+    head = unpack_header(data, expected_chip)
+    if len(data) != head.size + head.length:
+        raise ValueError("datagram length does not match the CSI1 header")
+    payload = bytes(data[head.size:head.size + head.length])
+    return CsiFrame(
+        version=head.version,
+        chip=head.chip,
+        sequence=head.sequence,
+        rssi=head.rssi,
+        channel=head.channel,
+        first_word_invalid=head.first_word_invalid,
+        mac=head.mac,
+        drops=head.drops,
+        payload=payload,
+        node_id=head.node_id,
+        rx_ts_us=head.rx_ts_us,
+        bandwidth_mhz=head.bandwidth_mhz,
+        role=head.role,
+    )
 
 
 class CsiFrameParser:
@@ -67,52 +243,34 @@ class CsiFrameParser:
                 self._save_text(self.pending[:start])
                 del self.pending[:start]
 
-            if len(self.pending) < HEADER.size:
+            if len(self.pending) < 6:
+                break
+            try:
+                size = header_size(self.pending)
+            except ValueError:
+                self._save_text(self.pending[:1])
+                del self.pending[:1]
+                continue
+            if size is None:
+                break
+            if len(self.pending) < size:
                 break
 
-            (
-                magic,
-                version,
-                chip,
-                length,
-                sequence,
-                rssi,
-                channel,
-                first_word_invalid,
-                _reserved,
-                mac,
-                drops,
-            ) = HEADER.unpack_from(self.pending)
-
-            if (
-                magic != MAGIC
-                or version != 1
-                or chip != self.expected_chip
-                or length > MAX_LEN
-            ):
+            try:
+                head = unpack_header(self.pending, self.expected_chip,
+                                     size=size)
+            except ValueError:
                 self._save_text(self.pending[:1])
                 del self.pending[:1]
                 continue
 
-            frame_size = HEADER.size + length
+            frame_size = head.size + head.length
             if len(self.pending) < frame_size:
                 break
 
-            payload = bytes(self.pending[HEADER.size:frame_size])
+            frames.append(parse_frame(self.pending[:frame_size],
+                                      self.expected_chip))
             del self.pending[:frame_size]
-            frames.append(
-                CsiFrame(
-                    version=version,
-                    chip=chip,
-                    sequence=sequence,
-                    rssi=rssi,
-                    channel=channel,
-                    first_word_invalid=bool(first_word_invalid),
-                    mac=mac,
-                    drops=drops,
-                    payload=payload,
-                )
-            )
 
         return frames
 
@@ -130,6 +288,12 @@ def frame_to_record(frame):
         "firmware_drops_since_previous_frame": frame.drops,
         "payload_length": len(frame.payload),
         "csi_payload_hex": frame.payload.hex(),
+        # v2 fields; v1 records carry the unset/None defaults.
+        "frame_version": frame.version,
+        "node_id": frame.node_id,
+        "rx_ts_us": frame.rx_ts_us,
+        "bandwidth_mhz": frame.bandwidth_mhz,
+        "node_role": frame.role,
     }
 
 

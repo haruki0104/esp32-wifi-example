@@ -13,7 +13,14 @@ import re
 from collections import deque
 from dataclasses import dataclass, field
 
-from csi_read import HEADER, MAGIC, MAX_LEN
+from csi_read import (
+    FLAG_BANDWIDTH_40MHZ,
+    FLAG_FIRST_WORD_INVALID,
+    FLAG_ROLE_TX,
+    HEADER_V2,
+    MAGIC,
+    MAX_LEN,
+)
 
 FRAME_BASE_TOPIC = "csi/v1"
 STATUS_ONLINE = "online"
@@ -69,28 +76,47 @@ class CsiFrameValue:
     mac: bytes = b"\x00" * 6
     drops: int = 0
     payload: bytes = b""
+    # v2 fields; see docs/csi-multi-node-design.md.
+    node_id: int = 1
+    rx_ts_us: int = 0
+    bandwidth_mhz: int = 20
+    role: str = "rx"
 
     def __post_init__(self):
         if len(self.payload) > MAX_LEN:
             raise ValueError(f"payload exceeds {MAX_LEN} bytes")
         if len(self.mac) != 6:
             raise ValueError("mac must be 6 bytes")
+        if not 1 <= self.node_id <= 255:
+            raise ValueError("node_id must be 1..255 (0 means unset)")
+        if self.bandwidth_mhz not in (20, 40):
+            raise ValueError("bandwidth_mhz must be 20 or 40")
+        if self.role not in ("rx", "tx"):
+            raise ValueError("role must be 'rx' or 'tx'")
 
 
 def encode_frame(value):
-    """Encode a frame value to CSI1 wire bytes (header + raw payload)."""
-    header = HEADER.pack(
+    """Encode a frame value to CSI1 v2 wire bytes (header + raw payload)."""
+    flags = 0
+    if value.first_word_invalid:
+        flags |= FLAG_FIRST_WORD_INVALID
+    if value.bandwidth_mhz == 40:
+        flags |= FLAG_BANDWIDTH_40MHZ
+    if value.role == "tx":
+        flags |= FLAG_ROLE_TX
+    header = HEADER_V2.pack(
         MAGIC,
-        1,  # version
+        2,  # version
         value.chip,
         len(value.payload),
         value.sequence & 0xFFFFFFFF,
+        int(value.rx_ts_us) & 0xFFFFFFFFFFFFFFFF,
+        value.node_id,
+        flags,
         value.rssi,
         value.channel,
-        1 if value.first_word_invalid else 0,
-        0,  # reserved
-        value.mac,
         value.drops & 0xFFFF,
+        value.mac,
     )
     return header + value.payload
 
@@ -109,6 +135,10 @@ def decode_frame(wire, expected_chip=1):
         mac=parsed.mac,
         drops=parsed.drops,
         payload=parsed.payload,
+        node_id=parsed.node_id,
+        rx_ts_us=parsed.rx_ts_us or 0,
+        bandwidth_mhz=parsed.bandwidth_mhz,
+        role=parsed.role,
     )
 
 

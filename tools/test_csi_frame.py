@@ -39,12 +39,29 @@ class CodecTests(unittest.TestCase):
         self.assertEqual(decoded, value)
         self.assertTrue(decoded.first_word_invalid)
 
+    def test_round_trip_preserves_v2_metadata(self):
+        value = make_value(node_id=3, rx_ts_us=1_700_000_000_123_456,
+                           bandwidth_mhz=40, role="tx", channel=10)
+        wire = encode_frame(value)
+        # v2 header is 32 bytes, and the version byte says 2.
+        self.assertEqual(wire[4], 2)
+        decoded = decode_frame(wire)
+        self.assertEqual(decoded, value)
+        self.assertEqual(decoded.node_id, 3)
+        self.assertEqual(decoded.rx_ts_us, 1_700_000_000_123_456)
+        self.assertEqual(decoded.bandwidth_mhz, 40)
+        self.assertEqual(decoded.role, "tx")
+
+    def test_rejects_unset_node_id(self):
+        with self.assertRaisesRegex(ValueError, "node_id"):
+            make_value(node_id=0)
+
     def test_rejects_bad_magic_version_chip(self):
         good = bytearray(encode_frame(make_value()))
         bad_magic = bytes(b"XXXX") + bytes(good[4:])
         with self.assertRaisesRegex(ValueError, "magic"):
             decode_frame(bad_magic)
-        bad_version = bytes(good[:4]) + b"\x02" + bytes(good[5:])
+        bad_version = bytes(good[:4]) + b"\x03" + bytes(good[5:])
         with self.assertRaisesRegex(ValueError, "version"):
             decode_frame(bad_version)
         with self.assertRaisesRegex(ValueError, "chip ID"):

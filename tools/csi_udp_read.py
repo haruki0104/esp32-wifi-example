@@ -9,56 +9,16 @@ import time
 from pathlib import Path
 
 from csi_read import (
-    CsiFrame,
-    HEADER,
-    MAGIC,
-    MAX_LEN,
+    MAX_FRAME_SIZE,
     default_output_path,
     frame_to_record,
+    parse_frame,
 )
 
 
 def parse_frame_datagram(datagram, expected_chip=1):
     """Validate one complete CSI1 frame carried in a single UDP datagram."""
-    if len(datagram) < HEADER.size:
-        raise ValueError("datagram is shorter than the CSI1 header")
-
-    (
-        magic,
-        version,
-        chip,
-        length,
-        sequence,
-        rssi,
-        channel,
-        first_word_invalid,
-        _reserved,
-        mac,
-        drops,
-    ) = HEADER.unpack_from(datagram)
-
-    if magic != MAGIC:
-        raise ValueError("invalid CSI1 magic")
-    if version != 1:
-        raise ValueError(f"unsupported CSI1 version: {version}")
-    if chip != expected_chip:
-        raise ValueError(f"unexpected chip ID: {chip}")
-    if length > MAX_LEN:
-        raise ValueError(f"payload exceeds {MAX_LEN} bytes: {length}")
-    if len(datagram) != HEADER.size + length:
-        raise ValueError("datagram length does not match CSI1 header")
-
-    return CsiFrame(
-        version=version,
-        chip=chip,
-        sequence=sequence,
-        rssi=rssi,
-        channel=channel,
-        first_word_invalid=bool(first_word_invalid),
-        mac=mac,
-        drops=drops,
-        payload=datagram[HEADER.size:],
-    )
+    return parse_frame(datagram, expected_chip)
 
 
 def main():
@@ -129,7 +89,7 @@ def main():
 
                     try:
                         datagram, address = receiver.recvfrom(
-                            HEADER.size + MAX_LEN + 1
+                            MAX_FRAME_SIZE + 1
                         )
                     except socket.timeout:
                         continue
