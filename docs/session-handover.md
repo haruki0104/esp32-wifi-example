@@ -4,11 +4,12 @@ Next session: start here. This file is the living handover; update it at the
 next handoff. Firmware behavior and commands live in `README.md`; repo rules
 in `AGENTS.md`; M0 architecture in `docs/csi-multi-node-design.md`.
 
-## Where things stand
+## Where things stand (updated 2026-11-23)
 
-- `dev` = `38b47ff` (merged PR #13 design doc). Local branch:
-  `feat/csi-v2-tx-rx` = `f05b734`, pushed, PR #15 OPEN / MERGEABLE / CI green,
-  awaiting Hermes review.
+- `dev` = `f744ed4`: PR #15 (firmware v2+TX+S3, incl. Hermes review fixes)
+  + PR #14 (host v2 parser+aggregator) + PR #17 (M0 runbook) ALL MERGED.
+  Former branch `feat/csi-v2-tx-rx` is done; work happens on `dev` or new
+  `feat/*` branches now.
 - Hermes owns `feat/csi-aggregator` (separate worktree
   `../sketch_jul29a-agg`): PR #14 (host v2 parser) OPEN / MERGEABLE;
   aggregator + M0 run analysis still in progress on that branch.
@@ -27,8 +28,8 @@ in `AGENTS.md`; M0 architecture in `docs/csi-multi-node-design.md`.
 
 ## TODO for next session (in order)
 
-1. **Collect Hermes review on PR #15**, address, merge #15 into `dev`
-   (dependency order: firmware first, then Hermes's #14 host parser).
+1. ~~Collect Hermes review on PR #15, merge~~ DONE (merged 2026-11-20;
+   #14 and runbook #17 also in). Next: flash + M0 run (needs user hardware).
 2. **Flash M0**: fill `CSI_TX_SSID/PASSWORD` in gitignored `secrets.h`
    (never commit); join the host to the `csi-tx` softAP; set `CSI_HOST_IP`
    to the host's address on that network. Flash TX first, then RX1, verify
