@@ -1,7 +1,8 @@
 # CSI MQTT and live-visualization roadmap
 
-Status: Phase 0 decided and Phase 1 seam implemented; MQTT firmware
-publisher, subscribers, and plots are not implemented yet.
+Status: Phase 0 decided; the Phase 1 firmware seam was added and then removed
+when the frozen v2 frame replaced it (see below); MQTT firmware publisher,
+subscribers, and plots are not implemented yet.
 
 Phase 0 baseline (verified 2026-11-07 on ESP32 Dev Module): `pio run`
 SUCCESS, host `unittest` 7/7, UDP capture of 50 frames in ~4.3 s with
@@ -27,13 +28,15 @@ Phase 0 decisions (locked for Phase 2):
   frames, count transport drops separately from capture-queue drops,
   keep sequence numbers. No unbounded queue or flash archive.
 
-Phase 1 seam (implemented, additive only): `src/csi/CsiFrame.h` value +
-wire codec (byte-identical to the UDP path), `src/csi/FramePublisher.h`
-narrow interface, `src/csi/UdpFramePublisher` concrete adapter (compiled
-but not yet wired into the sketch; the verified `CsiCollector` UDP path
-is untouched), host mirror `tools/csi_frame.py` with `FakePublisher` /
-`BoundedPublisher` covered by `tools/test_csi_frame.py`. Collector queue
-refactor and sketch wiring move to Phase 2 alongside the MQTT adapter.
+Phase 1 seam (added, then REMOVED 2026-11-20 in favour of the frozen v2 frame):
+`src/csi/CsiFrame.h` value + wire codec, `src/csi/FramePublisher.h` narrow
+interface, and `src/csi/UdpFramePublisher` were compiled but never wired into
+the sketch, and still encoded the 24-byte v1 header — while the host mirror
+`tools/csi_frame.py` moved to the 32-byte v2 header. Dead code that contradicts
+the live wire format gets deleted, not ported. The host mirror survives:
+`tools/csi_frame.py` with `FakePublisher` / `BoundedPublisher` covered by
+`tools/test_csi_frame.py`. If MQTT publishing is picked up again, the seam is
+rebuilt against `CsiFrameV2.h` rather than resurrected from this plan.
 
 ## Goal
 
@@ -210,8 +213,13 @@ GUI cannot block the subscriber.
 
 ### Phase 1 — Frame and publisher seam
 
+> Superseded 2026-11-20: the firmware half of this phase was deleted (the
+> frozen v2 frame replaced it and the seam still encoded v1). The boxes below
+> record what was built at the time, not what exists in the tree today; only
+> the host-side codec tests remain.
+
 - [x] Extract the CSI frame value/codec without changing the existing `CSI1`
-  wire format. (`src/csi/CsiFrame.h`, byte-identical encoding.)
+  wire format. (`src/csi/CsiFrame.h`, byte-identical encoding; removed.)
 - [x] Add host tests for encoding/decoding, invalid lengths, chip/version
   checks, and invalid-first-word behavior. (`tools/test_csi_frame.py`.)
 - [x] Separate acquisition queueing from UDP/MQTT publication. (Separation
