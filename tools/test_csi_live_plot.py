@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 try:
     import numpy  # noqa: F401  (waterfall_view is numpy-based)
@@ -8,7 +9,7 @@ except ImportError as error:
         "install tools/requirements-plot.txt"
     ) from error
 
-from csi_live_plot import rolling_xlim, waterfall_view
+from csi_live_plot import LiveState, rolling_xlim, run_plot, waterfall_view
 
 
 class WaterfallViewTests(unittest.TestCase):
@@ -75,6 +76,55 @@ class WaterfallViewTests(unittest.TestCase):
             waterfall_view([[1.0, 2.0]], vmax=0.0)
         with self.assertRaises(ValueError):
             waterfall_view([[1.0, 2.0]], vmax=-5.0)
+
+
+class LiveFeedSteppingTests(unittest.TestCase):
+    def test_detector_keeps_advancing_after_feed_window_fills(self):
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        state = LiveState(window=8)
+        animation = {}
+
+        class SteppingAnimation:
+            def __init__(self, figure, update, **_kwargs):
+                animation["figure"] = figure
+                for tick in range(120):
+                    # The UDP worker drops empty TX heartbeats before LiveState.
+                    if tick % 30:
+                        level = 10.0 if tick < 60 or tick % 2 else 40.0
+                        state.push_spectrum(
+                            [level, level + 1.0, level + 2.0, level + 3.0],
+                            {"sequence": tick - tick // 30,
+                             "rssi_dbm": -45, "channel": 6,
+                             "source_mac": "02:00:00:00:00:01"},
+                        )
+                    update(tick)
+
+        clock = (step * 0.1 for step in range(1000))
+        detect_params = {
+            "base_s": 3.0,
+            "short_s": 0.3,
+            "z_enter": 3.0,
+            "z_exit": 1.5,
+            "min_dur_s": 0.2,
+            "warmup_s": 0.0,
+        }
+        with mock.patch("matplotlib.animation.FuncAnimation", SteppingAnimation), \
+             mock.patch("matplotlib.pyplot.show"), \
+             mock.patch("csi_live_plot.time.monotonic",
+                        side_effect=lambda: next(clock)):
+            run_plot(state, window=8, interval_ms=100, detect_mode=True,
+                     detect_params=detect_params)
+
+        figure = animation["figure"]
+        z_values = list(figure.axes[2].lines[0].get_ydata())
+        _, _, stats = state.snapshot()
+        self.assertEqual(stats["frames"], 116)
+        # The first tick is a heartbeat with no plot data yet; later skipped
+        # heartbeats redraw the existing state without becoming CSI frames.
+        self.assertEqual(len(z_values), 119)
+        self.assertTrue(any(abs(z) > 0.1 for z in z_values[80:]))
 
 
 if __name__ == "__main__":
